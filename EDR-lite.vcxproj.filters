@@ -18,5 +18,22 @@
     <ClCompile Include="EDR-lite.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="EventCollector.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="TdhHelpers.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="ProcessStartEvent.h">
+      <Filter>Resource Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EventCollector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="TdhHelpers.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

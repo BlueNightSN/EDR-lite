@@ -124,6 +124,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="EDR-lite.cpp" />
+    <ClCompile Include="EventCollector.cpp" />
+    <ClCompile Include="TdhHelpers.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="EventCollector.h" />
+    <ClInclude Include="ProcessStartEvent.h" />
+    <ClInclude Include="TdhHelpers.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
