@@ -2,6 +2,7 @@
 #include <iostream>
 #include <Windows.h>
 #include <evntrace.h>
+#include "TdhHelpers.h"
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "tdh.lib") // we’ll use this later for parsing fields
 
@@ -129,8 +130,8 @@ void WINAPI EventCollector::OnEvent(PEVENT_RECORD pEvent)
 
     const bool isClassic =
         (pEvent->EventHeader.Flags & EVENT_HEADER_FLAG_CLASSIC_HEADER) != 0;
-    if (!isClassic)
-        return;
+    /*if (!isClassic)
+        return;*/
 
     const UCHAR opcode = pEvent->EventHeader.EventDescriptor.Opcode;
     if (opcode != 1) // Process Start
@@ -139,7 +140,30 @@ void WINAPI EventCollector::OnEvent(PEVENT_RECORD pEvent)
     ProcessStartEvent evt{};
     evt.timestampQpc = pEvent->EventHeader.TimeStamp.QuadPart;
     evt.pid = pEvent->EventHeader.ProcessId;
-    // PPID/image/cmdline will come from payload later
+    // PPID/image/cmdline will come from payload
+    // NEW: parse payload
+    auto infoBuf = GetEventInfoBuffer(pEvent);
+    if (!infoBuf.empty())
+    {
+        auto info = reinterpret_cast<PTRACE_EVENT_INFO>(infoBuf.data());
+
+        // DEBUG: dump property names
+        std::wcout << L"\n=== Properties for this event ===\n";
+        for (ULONG i = 0; i < info->TopLevelPropertyCount; ++i)
+        {
+            PWSTR name = (PWSTR)((PBYTE)info + info->EventPropertyInfoArray[i].NameOffset);
+            std::wcout << L"  - " << name << L"\n";
+        }
+        std::wcout << L"===============================\n\n";
+        // DEBUG
+
+        // Use payload fields (source of truth)
+        (void)GetPropertyUInt32(pEvent, info, L"ProcessId", evt.pid);
+        (void)GetPropertyUInt32(pEvent, info, L"ParentId", evt.ppid);
+        (void)GetPropertyUnicodeString(pEvent, info, L"ImageFileName", evt.imagePath);
+        (void)GetPropertyUnicodeString(pEvent, info, L"CommandLine", evt.commandLine);
+    }
+
 
     if (self->m_onProcessStart)
         self->m_onProcessStart(evt);

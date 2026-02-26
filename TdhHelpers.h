@@ -10,12 +10,12 @@ std::vector<BYTE> GetEventInfoBuffer(PEVENT_RECORD evt);
 bool GetPropertyUInt32(
     PEVENT_RECORD evt,
     PTRACE_EVENT_INFO info,
-    const wchar_t* name,
+    PCWSTR name,
     uint32_t& out);
 
 bool GetPropertyUnicodeString(
     PEVENT_RECORD evt,
     PTRACE_EVENT_INFO info,
-    const wchar_t* name,
+    PCWSTR name,
     std::wstring& out);
 

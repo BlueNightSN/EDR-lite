@@ -6,10 +6,13 @@ int wmain()
     EventCollector collector;
 
     const bool started = collector.Start([](const ProcessStartEvent& e) {
-        std::wcout << L"[ProcessStart] PID=" << e.pid
+        std::wcout
+            << L"[ProcessStart] PID=" << e.pid
             << L" PPID=" << e.ppid
             << L" TS=" << e.timestampQpc
-            << L"\n";
+            << L"\n  Image=" << (e.imagePath.empty() ? L"<empty>" : e.imagePath)
+            << L"\n  Cmd=" << (e.commandLine.empty() ? L"<empty>" : e.commandLine)
+            << L"\n\n";
         });
 
     if (!started)
@@ -24,4 +27,4 @@ int wmain()
 
     collector.Stop();
     return 0;
-}
+} 
