@@ -1,9 +1,5 @@
 #include "TdhHelpers.h"
-#include <cwchar>
-#include <iostream>
-#include <string>
-#include <vector>
-#include <Windows.h>
+
 std::vector<BYTE> GetEventInfoBuffer(PEVENT_RECORD evt)
 {
     ULONG size = 0;
@@ -120,4 +116,72 @@ bool GetPropertyUnicodeString(
 
     out.assign(buf.data());
     return !out.empty();
+}
+
+static std::wstring AnsiToWide(const char* s)
+{
+    if (!s) return L"";
+
+    int needed = MultiByteToWideChar(CP_ACP, 0, s, -1, nullptr, 0);
+    if (needed <= 1) return L"";
+
+    std::wstring w(needed - 1, L'\0');
+    MultiByteToWideChar(CP_ACP, 0, s, -1, &w[0], needed);
+    return w;
+}
+
+bool GetPropertyStringAuto(
+    PEVENT_RECORD evt,
+    PTRACE_EVENT_INFO info,
+    PCWSTR name,
+    std::wstring& out)
+{
+    out.clear();
+
+    if (!evt || !info || !name)
+        return false;
+
+    ULONG index = 0;
+    if (!FindTopLevelPropertyIndex(info, name, index))
+        return false;
+
+    PROPERTY_DATA_DESCRIPTOR desc{};
+    desc.PropertyName = reinterpret_cast<ULONGLONG>(const_cast<PWSTR>(name));
+    desc.ArrayIndex = ULONG_MAX;
+
+    ULONG rawSize = 0;
+    if (TdhGetPropertySize(evt, 0, nullptr, 1, &desc, &rawSize) != ERROR_SUCCESS || rawSize == 0)
+        return false;
+
+    std::vector<BYTE> buf(rawSize);
+    if (TdhGetProperty(evt, 0, nullptr, 1, &desc, rawSize, buf.data()) != ERROR_SUCCESS)
+        return false;
+
+    const auto& epi = info->EventPropertyInfoArray[index];
+    const USHORT inType = epi.nonStructType.InType;
+
+    if (inType == TDH_INTYPE_UNICODESTRING)
+    {
+        const wchar_t* ws = reinterpret_cast<const wchar_t*>(buf.data());
+        size_t cch = rawSize / sizeof(wchar_t);
+
+        // trim trailing NULs
+        while (cch > 0 && ws[cch - 1] == L'\0')
+            cch--;
+
+        out.assign(ws, ws + cch);
+        return !out.empty();
+    }
+    else if (inType == TDH_INTYPE_ANSISTRING)
+    {
+        // ensure NUL termination defensively
+        if (buf.back() != 0)
+            buf.push_back(0);
+
+        const char* s = reinterpret_cast<const char*>(buf.data());
+        out = AnsiToWide(s);
+        return !out.empty();
+    }
+
+    return false;
 }
