@@ -59,6 +59,7 @@ int wmain()
     std::wstring dummy;
     std::getline(std::wcin, dummy);
 
+
     collector.Stop();
     return 0;
 } 
