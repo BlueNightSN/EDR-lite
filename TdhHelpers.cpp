@@ -1,4 +1,5 @@
 #include "TdhHelpers.h"
+#include <cwchar>
 
 std::vector<BYTE> GetEventInfoBuffer(PEVENT_RECORD evt)
 {
@@ -60,12 +61,10 @@ bool GetPropertyUnicodeString(
     if (!FindTopLevelPropertyIndex(info, name, index))
         return false;
 
-    // descriptor by NAME (your SDK supports this)
     PROPERTY_DATA_DESCRIPTOR desc{};
     desc.PropertyName = reinterpret_cast<ULONGLONG>(const_cast<PWSTR>(name));
     desc.ArrayIndex = ULONG_MAX;
 
-    // get raw property length
     ULONG propLen = 0;
     if (TdhGetPropertySize(evt, 0, nullptr, 1, &desc, &propLen) != ERROR_SUCCESS || propLen == 0)
         return false;
@@ -76,7 +75,6 @@ bool GetPropertyUnicodeString(
 
     ULONG pointerSize = (evt->EventHeader.Flags & EVENT_HEADER_FLAG_32_BIT_HEADER) ? 4u : 8u;
 
-    // Query required buffer size (BufferSize is in WCHARs for this API usage)
     ULONG bufSize = 0;
     USHORT userDataConsumed = 0;
 
@@ -165,7 +163,6 @@ bool GetPropertyStringAuto(
         const wchar_t* ws = reinterpret_cast<const wchar_t*>(buf.data());
         size_t cch = rawSize / sizeof(wchar_t);
 
-        // trim trailing NULs
         while (cch > 0 && ws[cch - 1] == L'\0')
             cch--;
 
@@ -174,7 +171,6 @@ bool GetPropertyStringAuto(
     }
     else if (inType == TDH_INTYPE_ANSISTRING)
     {
-        // ensure NUL termination defensively
         if (buf.back() != 0)
             buf.push_back(0);
 

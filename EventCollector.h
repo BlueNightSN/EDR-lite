@@ -7,6 +7,7 @@
 #include <evntcons.h>
 
 #include "ProcessStartEvent.h"
+
 class EventCollector
 {
 public:
@@ -29,27 +30,20 @@ public:
     bool IsRunning() const { return m_running.load(); }
 
 private:
-    // ETW worker
     void Run();
-
-    // ETW callback
     static void WINAPI OnEvent(PEVENT_RECORD pEvent);
 
-    
     std::thread m_thread;
     std::atomic<bool> m_running{ false };
 
-    // ETW handles
     TRACEHANDLE m_sessionHandle = 0;
     TRACEHANDLE m_traceHandle = 0;
 
-    // Did we create the kernel session ourselves?
     bool m_startedSession = false;
 
-    // user callback
     OnProcessStart m_onProcessStart;
 
-    // since ETW callback is static, we keep a single active instance (fine for v1)
+    // since ETW callback is static, we keep a single active instance
     static EventCollector* s_instance;
 };
 

@@ -5,6 +5,7 @@
 #include <tdh.h>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 std::vector<BYTE> GetEventInfoBuffer(PEVENT_RECORD evt);
 
