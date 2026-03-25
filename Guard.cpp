@@ -23,9 +23,9 @@ std::vector<Alert> Guard::Inspect(const ProcessStartEvent& e) const
     {
         if (!rule) continue;
 
-        std::optional<Alert> alert = rule->Evaluate(e);
-        if (alert)
-            alerts.push_back(*alert);
+        Alert alert;
+        if (rule->Evaluate(e, alert))
+            alerts.push_back(std::move(alert));
     }
 
     return alerts;

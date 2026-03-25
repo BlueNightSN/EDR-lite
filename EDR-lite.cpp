@@ -1,19 +1,25 @@
 ﻿#include <iostream>
+#include <memory>
 #include <queue>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
 #include <atomic>
 
-#include "EventCollector.h"
+#include "EventCollectorFactory.h"
 #include "Guard.h"
 void PrintProcessEvent(const ProcessStartEvent& e, std::size_t alertCount);
 
-int wmain()
+int main()
 {
-
-    EventCollector collector;
+    std::unique_ptr<IEventCollector> collector = CreateEventCollector();
     Guard guard;
+
+    if (!collector)
+    {
+        std::wcerr << L"No supported EventCollector backend is available for this platform.\n";
+        return 1;
+    }
 
     std::queue<ProcessStartEvent> eventQueue;
     std::mutex queueMutex;
@@ -21,7 +27,7 @@ int wmain()
 
     std::atomic<bool> stopRequested{ false };
 
-    const bool started = collector.Start(
+    const bool started = collector->Start(
         [&](const ProcessStartEvent& e)
         {
             {
@@ -80,7 +86,7 @@ int wmain()
         PrintProcessEvent(e, alerts.size());
     }
 
-    collector.Stop();
+    collector->Stop();
 
     if (inputThread.joinable())
     {

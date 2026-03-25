@@ -1,6 +1,6 @@
 #pragma once
+#include <cstddef>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 #include "ProcessStartEvent.h"
@@ -27,7 +27,7 @@ public:
     virtual ~IRule() = default;
 
     virtual const std::wstring& Name() const = 0;
-    virtual std::optional<Alert> Evaluate(const ProcessStartEvent& e) const = 0;
+    virtual bool Evaluate(const ProcessStartEvent& e, Alert& alert) const = 0;
 };
 
 class Guard
@@ -41,4 +41,3 @@ public:
     std::vector<Alert> Inspect(const ProcessStartEvent& e) const;
     std::size_t RuleCount() const;
 };
-
