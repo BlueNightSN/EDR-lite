@@ -4,7 +4,7 @@
 #include <thread>
 #include <unordered_set>
 
-#include "../../IEventCollector.h"
+#include "../../core/collectors/IEventCollector.h"
 
 class MacosEventCollector final : public IEventCollector
 {

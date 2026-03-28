@@ -1,8 +1,10 @@
 #include "WindowsEtwEventCollector.h"
 
+#include <cstdlib>
 #include <initializer_list>
+#include <utility>
 
-#include "TdhHelpers.h"
+#include "EtwTdhHelpers.h"
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "tdh.lib")

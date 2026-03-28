@@ -5,6 +5,7 @@
 #include <sys/sysctl.h>
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <sstream>

@@ -1,9 +1,9 @@
 #include "EventCollectorFactory.h"
 
 #if defined(_WIN32)
-#include "platform/windows/WindowsEtwEventCollector.h"
+#include "../../platform/windows/WindowsEtwEventCollector.h"
 #elif defined(__APPLE__)
-#include "platform/macos/MacosEventCollector.h"
+#include "../../platform/macos/MacosEventCollector.h"
 #endif
 
 std::unique_ptr<IEventCollector> CreateEventCollector()

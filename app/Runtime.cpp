@@ -1,16 +1,31 @@
-﻿#include <iostream>
-#include <memory>
-#include <queue>
-#include <mutex>
-#include <condition_variable>
-#include <thread>
+#include "Runtime.h"
+
 #include <atomic>
+#include <condition_variable>
+#include <iostream>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <string>
+#include <thread>
+#include <utility>
 
-#include "EventCollectorFactory.h"
-#include "Guard.h"
-void PrintProcessEvent(const ProcessStartEvent& e, std::size_t alertCount);
+#include "../core/collectors/EventCollectorFactory.h"
+#include "../core/guard/Guard.h"
 
-int main()
+namespace
+{
+void PrintProcessEvent(const ProcessStartEvent& event, std::size_t alertCount)
+{
+    std::wcout << L"PID=" << event.pid
+        << L" PPID=" << event.ppid
+        << L" Image=" << (event.imagePath.empty() ? L"<empty>" : event.imagePath)
+        << L" Alerts=" << alertCount
+        << L"\n";
+}
+} // namespace
+
+int RunApplication()
 {
     std::unique_ptr<IEventCollector> collector = CreateEventCollector();
     Guard guard;
@@ -24,20 +39,18 @@ int main()
     std::queue<ProcessStartEvent> eventQueue;
     std::mutex queueMutex;
     std::condition_variable queueCv;
-
     std::atomic<bool> stopRequested{ false };
 
     const bool started = collector->Start(
-        [&](const ProcessStartEvent& e)
+        [&](const ProcessStartEvent& event)
         {
             {
                 std::lock_guard<std::mutex> lock(queueMutex);
-                eventQueue.push(e);
+                eventQueue.push(event);
             }
 
-           queueCv.notify_one();
+            queueCv.notify_one();
         });
-    
 
     if (!started)
     {
@@ -58,11 +71,10 @@ int main()
 
     while (true)
     {
-        ProcessStartEvent e{};
+        ProcessStartEvent event{};
 
         {
             std::unique_lock<std::mutex> lock(queueMutex);
-
             queueCv.wait(lock, [&]()
                 {
                     return !eventQueue.empty() || stopRequested.load();
@@ -78,12 +90,12 @@ int main()
                 continue;
             }
 
-            e = std::move(eventQueue.front());
+            event = std::move(eventQueue.front());
             eventQueue.pop();
         }
-        
-        const auto alerts = guard.Inspect(e);
-        PrintProcessEvent(e, alerts.size());
+
+        const auto alerts = guard.Inspect(event);
+        PrintProcessEvent(event, alerts.size());
     }
 
     collector->Stop();
@@ -94,12 +106,4 @@ int main()
     }
 
     return 0;
-}
-void PrintProcessEvent(const ProcessStartEvent& e, std::size_t alertCount)
-{
-    std::wcout << L"PID=" << e.pid
-        << L" PPID=" << e.ppid
-        << L" Image=" << (e.imagePath.empty() ? L"<empty>" : e.imagePath)
-        << L" Alerts=" << alertCount
-        << L"\n";
 }

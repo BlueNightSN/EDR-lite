@@ -1,11 +1,13 @@
 #pragma once
+
 #define NOMINMAX
 #include <Windows.h>
 #include <evntrace.h>
 #include <tdh.h>
+
+#include <cstdint>
 #include <string>
 #include <vector>
-#include <cstdint>
 
 std::vector<BYTE> GetEventInfoBuffer(PEVENT_RECORD evt);
 
@@ -26,4 +28,3 @@ bool GetPropertyStringAuto(
     PTRACE_EVENT_INFO info,
     PCWSTR name,
     std::wstring& out);
-

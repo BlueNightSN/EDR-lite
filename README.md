@@ -1,156 +1,151 @@
 EDR-Lite
 
-A lightweight Endpoint Detection telemetry collector written in C++ that monitors Windows process creation events using ETW (Event Tracing for Windows).
+EDR-Lite is a lightweight C++17 telemetry collector that captures process start activity and pushes normalized events through a small guard/rule pipeline.
 
-This project is a learning and research implementation of the type of telemetry pipelines used inside modern Endpoint Detection & Response (EDR) systems.
+The project currently supports:
 
-It captures process start events from the Windows kernel, parses event properties using TDH, and feeds them through a small rule engine for inspection.
+- Windows process creation telemetry using ETW and TDH
+- macOS process launch telemetry using process snapshot polling
+
+The codebase is organized as a low-risk refactor of the original working implementation. Platform-specific collectors stay isolated, while shared event and guard logic live in a common core layer.
 
 Features
 
-• Real-time process creation monitoring using Windows ETW
-• Uses the NT Kernel Logger provider
-• TDH property parsing to extract event fields
-• Producer–consumer architecture to safely process events
-• Simple Guard rule engine for detection logic
-• Clean modular C++ design
+- Real-time Windows process creation monitoring using ETW
+- TDH-based ETW property parsing for Windows process events
+- macOS process launch monitoring
+- Shared `ProcessStartEvent` model across platforms
+- Producer-consumer event flow between collector and app runtime
+- Simple guard/rule engine for inspection logic
+- Compile-time platform backend selection
+
+Folder Layout
+
+```text
+app/
+  Main.cpp
+  Runtime.cpp
+  Runtime.h
+
+core/
+  collectors/
+    EventCollectorFactory.cpp
+    EventCollectorFactory.h
+    IEventCollector.h
+  events/
+    ProcessStartEvent.h
+  guard/
+    Guard.cpp
+    Guard.h
+
+platform/
+  windows/
+    EtwTdhHelpers.cpp
+    EtwTdhHelpers.h
+    WindowsEtwEventCollector.cpp
+    WindowsEtwEventCollector.h
+  macos/
+    MacosEventCollector.cpp
+    MacosEventCollector.h
+```
 
 Architecture
 
-The system follows a simple telemetry pipeline similar to those used in security agents.
+The runtime flow is intentionally simple:
 
-Windows Kernel
-      │
-      │ ETW Events
-      ▼
-+-------------------+
-| EventCollector    |
-| (ETW consumer)    |
-+-------------------+
-          │
-          │ ProcessStartEvent
-          ▼
-+-------------------+
-| Event Queue       |
-| (producer/consumer)
-+-------------------+
-          │
-          ▼
-+-------------------+
-| Guard Engine      |
-| (rule evaluation) |
-+-------------------+
-          │
-          ▼
-+-------------------+
-| Alerts / Output   |
-+-------------------+
+```text
+Platform Collector
+      |
+      | ProcessStartEvent
+      v
+  Event Queue
+      |
+      v
+  Guard Engine
+      |
+      v
+ Alerts / Console Output
+```
+
+Layer responsibilities:
+
+- `app/`: application bootstrap, queue loop, stop handling, and console printing
+- `core/`: shared event model, collector interface, collector factory, and guard/rule logic
+- `platform/windows/`: Windows ETW collection and TDH parsing helpers
+- `platform/macos/`: macOS launch collection logic
+
+Platform Backends
+
+Windows
+
+- Uses the NT Kernel Logger / kernel process ETW flow
+- Parses event properties with TDH helpers
+- Normalizes fields into `ProcessStartEvent`
+- Keeps ETW callback and property parsing isolated in the Windows backend
+
+macOS
+
+- Polls active processes and detects newly seen PIDs
+- Builds a normalized `ProcessStartEvent` using macOS process APIs
+- Keeps launch-monitoring details isolated in the macOS backend
+
 Event Flow
 
-1.Windows kernel emits process start ETW events
+1. A platform collector captures a process start event.
+2. The collector normalizes the event into `ProcessStartEvent`.
+3. The collector forwards the event through the shared callback interface.
+4. The app runtime pushes the event into a thread-safe queue.
+5. The consumer loop sends the event to the `Guard`.
+6. The app prints the event and alert count.
 
-2.EventCollector subscribes to the NT Kernel Logger
+Core Types
 
-3.The ETW callback parses raw events using TDH
+`ProcessStartEvent`
 
-4.Events are normalized into ProcessStartEvent
-
-5.Events are pushed into a thread-safe queue
-
-6.The consumer thread sends them to the Guard engine
-
-7.Rules evaluate the event and may generate alerts
-
-Example Output
-PID=8344 PPID=7020 Image=C:\Windows\System32\notepad.exe Alerts=0
-PID=9212 PPID=7020 Image=C:\Windows\System32\cmd.exe Alerts=0
-Technologies Used
-
-C++17
-
-Windows ETW (Event Tracing for Windows)
-
-TDH (Trace Data Helper API)
-
-Win32 API
-
-Multithreading (std::thread)
-
-Synchronization primitives (mutex, condition_variable)
-
-Modern C++ containers and RAII
-
-Key Components
-EventCollector
-
-Responsible for:
-
-Starting the NT Kernel Logger ETW session
-
-Receiving raw ETW events
-
-Parsing event properties using TDH
-
-Converting events into ProcessStartEvent objects
-
-ProcessStartEvent
-
-Normalized event structure used throughout the pipeline.
-
+```cpp
 struct ProcessStartEvent
 {
-    uint64_t timestampQpc;
-    uint32_t pid;
-    uint32_t ppid;
+    uint64_t timestampQpc = 0;
+    uint32_t pid = 0;
+    uint32_t ppid = 0;
 
     std::wstring imagePath;
     std::wstring commandLine;
 };
-Guard Engine
+```
 
-The Guard component evaluates events using a rule system.
+`IEventCollector`
 
-Rules implement a simple interface:
+- Common interface implemented by the Windows and macOS collectors
+- Exposes `Start`, `Stop`, and `IsRunning`
 
-IRule
-   └── Evaluate(ProcessStartEvent)
+`Guard`
 
-Each rule may return an Alert if suspicious behavior is detected.
+- Owns a list of `IRule` instances
+- Evaluates each `ProcessStartEvent`
+- Returns zero or more `Alert` objects
 
-Why ETW?
+Why ETW on Windows?
 
-ETW provides low-overhead kernel telemetry used by many Windows security products.
-
-It allows monitoring:
-
-process creation
-
-file access
-
-network activity
-
-registry events
-
-PowerShell activity
-
-This project focuses on process start telemetry, which is the foundation for many detection rules.
+ETW provides low-overhead telemetry commonly used by security tooling. In this project it is used specifically for process creation events, which are a useful foundation for higher-level detections.
 
 Building
 
+Windows
+
 Requirements:
 
-Windows 10 / 11
+- Windows 10 / 11
+- Visual Studio 2022
+- Windows SDK
 
-Visual Studio 2022
+Relevant system libraries:
 
-Windows SDK
+- `advapi32.lib`
+- `tdh.lib`
 
-TDH / ETW libraries
+Build the Visual Studio project in x64 configuration.
 
-Libraries used:
+macOS
 
-advapi32.lib
-tdh.lib
-Rpcrt4.lib
-
-Build the project using Visual Studio x64 configuration.
+The project also builds on macOS with a C++17 compiler and the platform system headers used by `libproc` and `sysctl`.

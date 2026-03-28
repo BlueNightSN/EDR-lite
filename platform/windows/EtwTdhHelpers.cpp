@@ -1,4 +1,4 @@
-#include "TdhHelpers.h"
+#include "EtwTdhHelpers.h"
 
 #include <cwchar>
 

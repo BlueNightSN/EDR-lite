@@ -1,9 +1,12 @@
 #pragma once
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
-#include "ProcessStartEvent.h"
+
+#include "../events/ProcessStartEvent.h"
+
 enum class Severity
 {
     Info,

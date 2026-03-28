@@ -15,16 +15,19 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="EDR-lite.cpp">
+    <ClCompile Include="app\Main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Guard.cpp">
+    <ClCompile Include="app\Runtime.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="EventCollectorFactory.cpp">
+    <ClCompile Include="core\collectors\EventCollectorFactory.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="platform\windows\TdhHelpers.cpp">
+    <ClCompile Include="core\guard\Guard.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\windows\EtwTdhHelpers.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="platform\windows\WindowsEtwEventCollector.cpp">
@@ -35,19 +38,22 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="ProcessStartEvent.h">
-      <Filter>Resource Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Guard.h">
+    <ClInclude Include="app\Runtime.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="IEventCollector.h">
+    <ClInclude Include="core\events\ProcessStartEvent.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="EventCollectorFactory.h">
+    <ClInclude Include="core\guard\Guard.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="platform\windows\TdhHelpers.h">
+    <ClInclude Include="core\collectors\IEventCollector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="core\collectors\EventCollectorFactory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\windows\EtwTdhHelpers.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="platform\windows\WindowsEtwEventCollector.h">

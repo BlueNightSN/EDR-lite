@@ -125,20 +125,22 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="EDR-lite.cpp" />
-    <ClCompile Include="EventCollectorFactory.cpp" />
-    <ClCompile Include="Guard.cpp" />
+    <ClCompile Include="app\Main.cpp" />
+    <ClCompile Include="app\Runtime.cpp" />
+    <ClCompile Include="core\collectors\EventCollectorFactory.cpp" />
+    <ClCompile Include="core\guard\Guard.cpp" />
     <ClCompile Include="platform\macos\MacosEventCollector.cpp" />
-    <ClCompile Include="platform\windows\TdhHelpers.cpp" />
+    <ClCompile Include="platform\windows\EtwTdhHelpers.cpp" />
     <ClCompile Include="platform\windows\WindowsEtwEventCollector.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="EventCollectorFactory.h" />
-    <ClInclude Include="Guard.h" />
-    <ClInclude Include="IEventCollector.h" />
-    <ClInclude Include="ProcessStartEvent.h" />
+    <ClInclude Include="app\Runtime.h" />
+    <ClInclude Include="core\collectors\EventCollectorFactory.h" />
+    <ClInclude Include="core\collectors\IEventCollector.h" />
+    <ClInclude Include="core\events\ProcessStartEvent.h" />
+    <ClInclude Include="core\guard\Guard.h" />
     <ClInclude Include="platform\macos\MacosEventCollector.h" />
-    <ClInclude Include="platform\windows\TdhHelpers.h" />
+    <ClInclude Include="platform\windows\EtwTdhHelpers.h" />
     <ClInclude Include="platform\windows\WindowsEtwEventCollector.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

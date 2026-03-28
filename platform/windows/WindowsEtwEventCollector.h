@@ -7,7 +7,7 @@
 #include <evntrace.h>
 #include <evntcons.h>
 
-#include "../../IEventCollector.h"
+#include "../../core/collectors/IEventCollector.h"
 
 class WindowsEtwEventCollector final : public IEventCollector
 {
