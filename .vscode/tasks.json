@@ -4,7 +4,7 @@
         {
             "label": "Build test",
             "type": "shell",
-            "command": "clang++ -std=c++17 -I\"${workspaceFolder}\" -o \"${workspaceFolder}/test\" \"${workspaceFolder}/EDR-lite.cpp\" \"${workspaceFolder}/EventCollectorFactory.cpp\" \"${workspaceFolder}/Guard.cpp\" $(if [ \"$(uname)\" = \"Darwin\" ]; then find \"${workspaceFolder}/platform/macos\" -name '*.cpp' -type f; else find \"${workspaceFolder}\" -name '*.cpp' -type f ! -path '*/platform/macos/*' ! -name 'EventCollector.cpp' ! -name 'TdhHelpers.cpp'; fi)",
+            "command": "clang++ -std=c++17 -I\"${workspaceFolder}\" -o \"${workspaceFolder}/test\" \"${workspaceFolder}/app/Main.cpp\" \"${workspaceFolder}/app/Runtime.cpp\" \"${workspaceFolder}/core/collectors/EventCollectorFactory.cpp\" \"${workspaceFolder}/core/guard/Guard.cpp\" $(if [ \"$(uname)\" = \"Darwin\" ]; then find \"${workspaceFolder}/platform/macos\" -name '*.cpp' -type f; else find \"${workspaceFolder}\" -name '*.cpp' -type f ! -path '*/platform/macos/*' ! -name 'EventCollector.cpp' ! -name 'TdhHelpers.cpp'; fi) $(if [ \"$(uname)\" = \"Darwin\" ]; then printf '%s' ' -lcurl'; fi)",
             "options": {
                 "cwd": "${workspaceFolder}"
             },

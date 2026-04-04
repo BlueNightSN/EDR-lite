@@ -238,6 +238,11 @@ ClientBin/
 *.jfm
 *.pfx
 *.publishsettings
+
+# Local secrets
+.env
+.env.*
+!.env.example
 orleans.codegen.cs
 
 # Including strong name files can present a security risk

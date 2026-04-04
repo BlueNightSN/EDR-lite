@@ -36,11 +36,21 @@ public:
 class Guard
 {
 private:
+    struct DownloadScanState;
     std::vector<std::unique_ptr<IRule>> m_rules;
+    std::unique_ptr<DownloadScanState> m_downloadScan;
 
 public:
+    Guard();
+    ~Guard();
+    Guard(const Guard&) = delete;
+    Guard& operator=(const Guard&) = delete;
+    Guard(Guard&&) = delete;
+    Guard& operator=(Guard&&) = delete;
+
     void AddRule(std::unique_ptr<IRule> rule);
     bool RemoveRuleByIndex(std::size_t index); // 0-based
     std::vector<Alert> Inspect(const ProcessStartEvent& e) const;
+    void InspectDownloadPath(const std::wstring& path);
     std::size_t RuleCount() const;
 };
