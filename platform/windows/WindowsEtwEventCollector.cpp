@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <utility>
+#include <vector>
 
 #include "EtwTdhHelpers.h"
 
@@ -12,6 +13,48 @@
 static const GUID kSystemTraceControlGuid =
 { 0x9e814aad, 0x3204, 0x11d2,
   { 0x9a, 0x82, 0x00, 0x60, 0x08, 0xa8, 0x69, 0x39 } };
+
+namespace
+{
+std::wstring ReadProcessImagePath(uint32_t pid)
+{
+    if (pid == 0)
+    {
+        return {};
+    }
+
+    HANDLE processHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!processHandle)
+    {
+        return {};
+    }
+
+    std::wstring imagePath;
+    DWORD bufferLength = MAX_PATH;
+    std::vector<wchar_t> buffer(static_cast<std::size_t>(bufferLength));
+
+    while (true)
+    {
+        DWORD length = bufferLength;
+        if (QueryFullProcessImageNameW(processHandle, 0, buffer.data(), &length))
+        {
+            imagePath.assign(buffer.data(), buffer.data() + length);
+            break;
+        }
+
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+        {
+            break;
+        }
+
+        bufferLength *= 2;
+        buffer.resize(static_cast<std::size_t>(bufferLength));
+    }
+
+    CloseHandle(processHandle);
+    return imagePath;
+}
+} // namespace
 
 WindowsEtwEventCollector* WindowsEtwEventCollector::s_instance = nullptr;
 
@@ -224,6 +267,7 @@ void WINAPI WindowsEtwEventCollector::OnEvent(PEVENT_RECORD pEvent)
     }
 
     evt.imagePath = std::move(image);
+    evt.parentImagePath = ReadProcessImagePath(evt.ppid);
     evt.commandLine = std::move(cmd);
 
     if (self->m_onProcessStart)

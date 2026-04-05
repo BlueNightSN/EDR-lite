@@ -110,6 +110,7 @@ struct ProcessStartEvent
     uint32_t ppid = 0;
 
     std::wstring imagePath;
+    std::wstring parentImagePath;
     std::wstring commandLine;
 };
 ```

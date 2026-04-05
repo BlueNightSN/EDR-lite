@@ -69,6 +69,25 @@ std::wstring BytesToWide(const std::string& text)
     return std::wstring(text.begin(), text.end());
 }
 
+bool ReadProcessImagePath(int pid, std::wstring& imagePath)
+{
+    imagePath.clear();
+    if (pid <= 0)
+    {
+        return false;
+    }
+
+    char pathBuffer[PROC_PIDPATHINFO_MAXSIZE] = {};
+    const int pathLength = proc_pidpath(pid, pathBuffer, sizeof(pathBuffer));
+    if (pathLength <= 0)
+    {
+        return false;
+    }
+
+    imagePath = Utf8ToWide(pathBuffer);
+    return !imagePath.empty();
+}
+
 std::wstring QuoteArgumentIfNeeded(const std::wstring& arg)
 {
     if (arg.find_first_of(L" \t\"") == std::wstring::npos)
@@ -198,10 +217,7 @@ bool BuildProcessStartEvent(int pid, ProcessStartEvent& event)
         return false;
     }
 
-    char pathBuffer[PROC_PIDPATHINFO_MAXSIZE] = {};
-    const int pathLength = proc_pidpath(pid, pathBuffer, sizeof(pathBuffer));
-
-    if (pathLength <= 0)
+    if (!ReadProcessImagePath(pid, event.imagePath))
     {
         return false;
     }
@@ -210,7 +226,7 @@ bool BuildProcessStartEvent(int pid, ProcessStartEvent& event)
         std::chrono::steady_clock::now().time_since_epoch().count());
     event.pid = static_cast<uint32_t>(pid);
     event.ppid = static_cast<uint32_t>(bsdInfo.pbi_ppid);
-    event.imagePath = Utf8ToWide(pathBuffer);
+    ReadProcessImagePath(bsdInfo.pbi_ppid, event.parentImagePath);
     if (!ReadCommandLine(pid, event.commandLine))
     {
         event.commandLine.clear();
