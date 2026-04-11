@@ -129,7 +129,6 @@
     <ClCompile Include="app\Runtime.cpp" />
     <ClCompile Include="core\collectors\EventCollectorFactory.cpp" />
     <ClCompile Include="core\guard\Guard.cpp" />
-    <ClCompile Include="platform\macos\MacosEventCollector.cpp" />
     <ClCompile Include="platform\windows\EtwTdhHelpers.cpp" />
     <ClCompile Include="platform\windows\WindowsEtwEventCollector.cpp" />
   </ItemGroup>
@@ -139,7 +138,6 @@
     <ClInclude Include="core\collectors\IEventCollector.h" />
     <ClInclude Include="core\events\ProcessStartEvent.h" />
     <ClInclude Include="core\guard\Guard.h" />
-    <ClInclude Include="platform\macos\MacosEventCollector.h" />
     <ClInclude Include="platform\windows\EtwTdhHelpers.h" />
     <ClInclude Include="platform\windows\WindowsEtwEventCollector.h" />
   </ItemGroup>

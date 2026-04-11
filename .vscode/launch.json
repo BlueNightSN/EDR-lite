@@ -4,16 +4,15 @@
         
         {
             "name": "Run EDR-lite",
-            "type": "cppdbg",
+            "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/test",
+            "program": "${workspaceFolder}\\x64\\Debug\\EDR-lite.exe",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
-            "externalConsole": false,
-            "MIMode": "lldb",
-            "preLaunchTask": "Build test"
+            "externalConsole": true,
+            "preLaunchTask": "Build EDR-lite"
         }
     ]
 }

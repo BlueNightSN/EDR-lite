@@ -1,6 +1,7 @@
 #include "Guard.h"
 
 #include <algorithm>
+#include <cassert>
 #include <atomic>
 #include <chrono>
 #include <cctype>
@@ -23,6 +24,11 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#define NOMINMAX
+#include <Windows.h>
+#endif
+
 #if defined(__APPLE__)
 #include <curl/curl.h>
 #endif
@@ -41,9 +47,54 @@ constexpr long kCurlRequestTimeoutSeconds = 30;
 
 std::mutex g_logMutex;
 
+void EmitDebugLine(const std::wstring& line)
+{
+#if defined(_WIN32)
+    const std::wstring withNewline = line + L"\n";
+    OutputDebugStringW(withNewline.c_str());
+#else
+    (void)line;
+#endif
+}
+
 std::wstring BytesToWide(const std::string& text)
 {
     return std::wstring(text.begin(), text.end());
+}
+
+std::wstring MessageToWide(const std::string& text)
+{
+    return BytesToWide(text);
+}
+
+std::wstring PathToWide(const std::filesystem::path& path)
+{
+#if defined(_WIN32)
+    return path.native();
+#else
+    return BytesToWide(path.string());
+#endif
+}
+
+std::wstring DescribePathForLogging(const std::filesystem::path& path)
+{
+    if (path.empty())
+    {
+        return L"<empty>";
+    }
+
+    std::error_code ec;
+    std::filesystem::path resolved = path;
+    if (!resolved.is_absolute())
+    {
+        const auto absolutePath = std::filesystem::absolute(resolved, ec);
+        if (!ec && !absolutePath.empty())
+        {
+            resolved = absolutePath;
+        }
+    }
+
+    return PathToWide(resolved);
 }
 
 std::wstring NormalizePathKey(const std::wstring& path)
@@ -62,12 +113,37 @@ std::wstring NormalizePathKey(const std::wstring& path)
 void LogLine(const std::wstring& line)
 {
     std::lock_guard<std::mutex> lock(g_logMutex);
+    EmitDebugLine(line);
     std::wcout << line << L"\n";
 }
 
 void LogDownloadLine(const std::wstring& line)
 {
     LogLine(L"[download-scan] " + line);
+}
+
+std::string ReadEnvironmentVariable(std::string_view name)
+{
+#if defined(_WIN32)
+    char* value = nullptr;
+    std::size_t length = 0;
+    if (_dupenv_s(&value, &length, std::string(name).c_str()) != 0 || value == nullptr || length == 0)
+    {
+        return {};
+    }
+
+    std::string result(value);
+    std::free(value);
+    return result;
+#else
+    const char* value = std::getenv(std::string(name).c_str());
+    if (value == nullptr || value[0] == '\0')
+    {
+        return {};
+    }
+
+    return value;
+#endif
 }
 
 enum class DownloadVerdict
@@ -170,31 +246,131 @@ struct HttpResponse
 
 std::filesystem::path ResolveCacheFilePath()
 {
+    std::error_code tempEc;
+    const std::filesystem::path tempDirectory = std::filesystem::temp_directory_path(tempEc);
+    const std::filesystem::path fallbackBase = !tempEc && !tempDirectory.empty()
+        ? tempDirectory
+        : std::filesystem::current_path(tempEc);
+
 #if defined(_WIN32)
-    const char* localAppData = std::getenv("LOCALAPPDATA");
-    std::filesystem::path base = (localAppData && localAppData[0] != '\0')
+    const std::string localAppData = ReadEnvironmentVariable("LOCALAPPDATA");
+    std::filesystem::path base = !localAppData.empty()
         ? std::filesystem::path(localAppData)
-        : std::filesystem::temp_directory_path();
+        : fallbackBase;
     return base / "EDR-lite" / "virustotal_cache.tsv";
 #elif defined(__APPLE__)
-    const char* home = std::getenv("HOME");
-    std::filesystem::path base = (home && home[0] != '\0')
+    const std::string home = ReadEnvironmentVariable("HOME");
+    std::filesystem::path base = !home.empty()
         ? std::filesystem::path(home) / "Library" / "Application Support"
-        : std::filesystem::temp_directory_path();
+        : fallbackBase;
     return base / "EDR-lite" / "virustotal_cache.tsv";
 #else
-    return std::filesystem::temp_directory_path() / "EDR-lite" / "virustotal_cache.tsv";
+    return fallbackBase / "EDR-lite" / "virustotal_cache.tsv";
 #endif
 }
 
-void EnsureCacheDirectoryExists(const std::filesystem::path& cachePath)
+bool EnsureParentDirectoryExists(const std::filesystem::path& filePath, const std::wstring_view purpose)
 {
     std::error_code ec;
-    const auto parent = cachePath.parent_path();
+    const auto parent = filePath.parent_path();
     if (!parent.empty())
     {
         std::filesystem::create_directories(parent, ec);
+        if (ec)
+        {
+            EmitDebugLine(
+                L"[download-scan] Failed to create parent directory for "
+                + std::wstring(purpose)
+                + L": "
+                + DescribePathForLogging(filePath)
+                + L" error="
+                + MessageToWide(ec.message()));
+            return false;
+        }
     }
+
+    return true;
+}
+
+bool ValidatePathForOpen(const std::filesystem::path& path, const std::wstring_view purpose)
+{
+    assert(!path.empty());
+    if (path.empty())
+    {
+        EmitDebugLine(
+            L"[download-scan] Refusing to open empty path for "
+            + std::wstring(purpose));
+        return false;
+    }
+
+    return true;
+}
+
+bool OpenInputFile(
+    std::ifstream& stream,
+    const std::filesystem::path& path,
+    const std::ios::openmode mode,
+    const std::wstring_view purpose)
+{
+    if (!ValidatePathForOpen(path, purpose))
+    {
+        return false;
+    }
+
+    EmitDebugLine(
+        L"[download-scan] Opening input file for "
+        + std::wstring(purpose)
+        + L": "
+        + DescribePathForLogging(path));
+
+    stream.open(path, mode);
+    if (!stream.is_open())
+    {
+        EmitDebugLine(
+            L"[download-scan] Failed to open input file for "
+            + std::wstring(purpose)
+            + L": "
+            + DescribePathForLogging(path));
+        return false;
+    }
+
+    return true;
+}
+
+bool OpenOutputFile(
+    std::ofstream& stream,
+    const std::filesystem::path& path,
+    const std::ios::openmode mode,
+    const std::wstring_view purpose)
+{
+    if (!ValidatePathForOpen(path, purpose))
+    {
+        return false;
+    }
+
+    if (!EnsureParentDirectoryExists(path, purpose))
+    {
+        return false;
+    }
+
+    EmitDebugLine(
+        L"[download-scan] Opening output file for "
+        + std::wstring(purpose)
+        + L": "
+        + DescribePathForLogging(path));
+
+    stream.open(path, mode);
+    if (!stream.is_open())
+    {
+        EmitDebugLine(
+            L"[download-scan] Failed to open output file for "
+            + std::wstring(purpose)
+            + L": "
+            + DescribePathForLogging(path));
+        return false;
+    }
+
+    return true;
 }
 
 std::wstring FormatFinalVerdictMessage(
@@ -257,8 +433,8 @@ std::string StripOptionalQuotes(const std::string& value)
 
 std::string ReadApiKeyFromDotEnv(const std::filesystem::path& envPath)
 {
-    std::ifstream input(envPath);
-    if (!input)
+    std::ifstream input;
+    if (!OpenInputFile(input, envPath, std::ios::in, L"VirusTotal .env file"))
     {
         return {};
     }
@@ -294,8 +470,8 @@ std::string ReadApiKeyFromDotEnv(const std::filesystem::path& envPath)
 
 std::string LoadVirusTotalApiKey()
 {
-    const char* envKey = std::getenv("VT_API_KEY");
-    if (envKey && envKey[0] != '\0')
+    const std::string envKey = ReadEnvironmentVariable("VT_API_KEY");
+    if (!envKey.empty())
     {
         return envKey;
     }
@@ -365,8 +541,8 @@ std::unordered_map<std::string, VerdictRecord> LoadCache(const std::filesystem::
 {
     std::unordered_map<std::string, VerdictRecord> cache;
 
-    std::ifstream input(cachePath);
-    if (!input)
+    std::ifstream input;
+    if (!OpenInputFile(input, cachePath, std::ios::in, L"VirusTotal cache file"))
     {
         return cache;
     }
@@ -407,10 +583,8 @@ void SaveCache(
     const std::filesystem::path& cachePath,
     const std::unordered_map<std::string, VerdictRecord>& cache)
 {
-    EnsureCacheDirectoryExists(cachePath);
-
-    std::ofstream output(cachePath, std::ios::trunc);
-    if (!output)
+    std::ofstream output;
+    if (!OpenOutputFile(output, cachePath, std::ios::out | std::ios::trunc, L"VirusTotal cache file"))
     {
         return;
     }
@@ -607,8 +781,8 @@ std::string FinalizeSha256(Sha256Context& context)
 
 bool ComputeSha256File(const std::filesystem::path& path, std::string& sha256)
 {
-    std::ifstream input(path, std::ios::binary);
-    if (!input)
+    std::ifstream input;
+    if (!OpenInputFile(input, path, std::ios::in | std::ios::binary, L"downloaded file for hashing"))
     {
         return false;
     }
@@ -1128,8 +1302,8 @@ struct Guard::DownloadScanState
     std::unordered_set<std::string> activeHashes;
 
     std::mutex cacheMutex;
-    std::unordered_map<std::string, VerdictRecord> cache;
     std::filesystem::path cachePath;
+    std::unordered_map<std::string, VerdictRecord> cache;
 
     std::thread worker;
     std::string apiKey;
@@ -1137,9 +1311,17 @@ struct Guard::DownloadScanState
     bool workerRunning = false;
 
     DownloadScanState()
-        : cachePath(ResolveCacheFilePath())
-        , cache(LoadCache(cachePath))
     {
+        cachePath = ResolveCacheFilePath();
+        assert(!cachePath.empty());
+        EmitDebugLine(L"[download-scan] Resolved cache path: " + DescribePathForLogging(cachePath));
+
+        if (!EnsureParentDirectoryExists(cachePath, L"VirusTotal cache file"))
+        {
+            LogDownloadLine(L"Failed to prepare cache directory for " + PathToWide(cachePath));
+        }
+
+        cache = LoadCache(cachePath);
         apiKey = LoadVirusTotalApiKey();
 
         try

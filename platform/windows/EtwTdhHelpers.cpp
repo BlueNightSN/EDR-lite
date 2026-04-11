@@ -141,8 +141,16 @@ static std::wstring AnsiToWide(const char* s)
         return L"";
     }
 
-    std::wstring w(static_cast<std::size_t>(needed - 1), L'\0');
-    MultiByteToWideChar(CP_ACP, 0, s, -1, &w[0], needed);
+    // `needed` includes the trailing null terminator. Allocate room for it,
+    // then trim it back off after conversion.
+    std::wstring w(static_cast<std::size_t>(needed), L'\0');
+    const int converted = MultiByteToWideChar(CP_ACP, 0, s, -1, w.data(), needed);
+    if (converted <= 1)
+    {
+        return L"";
+    }
+
+    w.resize(static_cast<std::size_t>(converted - 1));
     return w;
 }
 

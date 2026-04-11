@@ -2,14 +2,19 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Build test",
-            "type": "shell",
-            "command": "clang++ -std=c++17 -I\"${workspaceFolder}\" -o \"${workspaceFolder}/test\" \"${workspaceFolder}/app/Main.cpp\" \"${workspaceFolder}/app/Runtime.cpp\" \"${workspaceFolder}/core/collectors/EventCollectorFactory.cpp\" \"${workspaceFolder}/core/guard/Guard.cpp\" $(if [ \"$(uname)\" = \"Darwin\" ]; then find \"${workspaceFolder}/platform/macos\" -name '*.cpp' -type f; else find \"${workspaceFolder}\" -name '*.cpp' -type f ! -path '*/platform/macos/*' ! -name 'EventCollector.cpp' ! -name 'TdhHelpers.cpp'; fi) $(if [ \"$(uname)\" = \"Darwin\" ]; then printf '%s' ' -lcurl'; fi)",
+            "label": "Build EDR-lite",
+            "type": "process",
+            "command": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
+            "args": [
+                "${workspaceFolder}\\EDR-lite.sln",
+                "/p:Configuration=Debug",
+                "/p:Platform=x64"
+            ],
             "options": {
                 "cwd": "${workspaceFolder}"
             },
             "problemMatcher": [
-                "$gcc"
+                "$msCompile"
             ],
             "group": {
                 "kind": "build",
@@ -17,22 +22,42 @@
             }
         },
         {
-            "type": "cppbuild",
-            "label": "C/C++: clang++ build active file",
-            "command": "/usr/bin/clang++",
+            "type": "process",
+            "label": "C/C++: build active file",
+            "command": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
             "args": [
-                "-fcolor-diagnostics",
-                "-fansi-escape-codes",
-                "-g",
-                "${file}",
-                "-o",
-                "${fileDirname}/${fileBasenameNoExtension}"
+                "${workspaceFolder}\\EDR-lite.sln",
+                "/p:Configuration=Debug",
+                "/p:Platform=x64"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$msCompile"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "detail": "Builds the full Visual Studio project so linked sources like Runtime.cpp are included."
+        },
+        {
+            "type": "cppbuild",
+            "label": "C/C++: cl.exe build active file",
+            "command": "cl.exe",
+            "args": [
+                "/Zi",
+                "/EHsc",
+                "/nologo",
+                "/Fe${fileDirname}\\${fileBasenameNoExtension}.exe",
+                "${file}"
             ],
             "options": {
                 "cwd": "${fileDirname}"
             },
             "problemMatcher": [
-                "$gcc"
+                "$msCompile"
             ],
             "group": {
                 "kind": "build",

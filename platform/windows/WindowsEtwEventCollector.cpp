@@ -255,20 +255,18 @@ void WINAPI WindowsEtwEventCollector::OnEvent(PEVENT_RECORD pEvent)
     const bool okPpid = tryUInt32(evt.ppid, { L"ParentProcessId", L"ParentProcessID", L"ParentId" });
     (void)okPpid;
 
-    std::wstring image;
-    std::wstring cmd;
-
-    tryString(image, { L"ImageFileName", L"ImageName", L"ProcessName" });
-    tryString(cmd, { L"CommandLine", L"CmdLine" });
-
     if (!okPid)
     {
         return;
     }
 
-    evt.imagePath = std::move(image);
+    // Avoid TDH string parsing for now. We already found one heap overwrite in
+    // the ANSI conversion path, and debugger-launched child processes are a
+    // fast way to stress this callback. Querying the live process image keeps
+    // the collector usable while we narrow the remaining issue.
+    evt.imagePath = ReadProcessImagePath(evt.pid);
     evt.parentImagePath = ReadProcessImagePath(evt.ppid);
-    evt.commandLine = std::move(cmd);
+    evt.commandLine.clear();
 
     if (self->m_onProcessStart)
     {
