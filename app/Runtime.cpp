@@ -184,22 +184,22 @@ int RunApplication()
     }
 
     std::queue<ProcessStartEvent> eventQueue;
-    // std::queue<DownloadFileEvent> downloadQueue;
-    // std::unordered_map<std::wstring, DownloadCandidate> downloadCandidates;
+    std::queue<DownloadFileEvent> downloadQueue;
+    std::unordered_map<std::wstring, DownloadCandidate> downloadCandidates;
     std::mutex queueMutex;
     std::condition_variable queueCv;
     std::atomic<bool> stopRequested{ false };
 
-    // collector->SetOnDownloadActivity(
-    //     [&](const DownloadFileEvent& event)
-    //     {
-    //         {
-    //             std::lock_guard<std::mutex> lock(queueMutex);
-    //             downloadQueue.push(event);
-    //         }
-    //
-    //         queueCv.notify_one();
-    //     });
+    collector->SetOnDownloadActivity(
+        [&](const DownloadFileEvent& event)
+        {
+            {
+                std::lock_guard<std::mutex> lock(queueMutex);
+                downloadQueue.push(event);
+            }
+
+            queueCv.notify_one();
+        });
 
     const bool started = collector->Start(
         [&](const ProcessStartEvent& event)
@@ -239,7 +239,7 @@ int RunApplication()
 
     while (true)
     {
-        // std::queue<DownloadFileEvent> pendingDownloads;
+        std::queue<DownloadFileEvent> pendingDownloads;
         ProcessStartEvent event{};
         bool hasProcessEvent = false;
         bool shouldStop = false;
@@ -249,15 +249,15 @@ int RunApplication()
             queueCv.wait_for(lock, kDownloadCandidateTick, [&]()
                 {
                     return !eventQueue.empty()
-                        // || !downloadQueue.empty()
+                        || !downloadQueue.empty()
                         || stopRequested.load();
                 });
 
-            // while (!downloadQueue.empty())
-            // {
-            //     pendingDownloads.push(std::move(downloadQueue.front()));
-            //     downloadQueue.pop();
-            // }
+            while (!downloadQueue.empty())
+            {
+                pendingDownloads.push(std::move(downloadQueue.front()));
+                downloadQueue.pop();
+            }
 
             if (!eventQueue.empty())
             {
@@ -267,18 +267,18 @@ int RunApplication()
             }
 
             shouldStop = stopRequested.load() && eventQueue.empty();
-            // && downloadQueue.empty();
+            shouldStop = shouldStop && downloadQueue.empty();
         }
 
-        // const TimePoint now = Clock::now();
+        const TimePoint now = Clock::now();
 
-        // while (!pendingDownloads.empty())
-        // {
-        //     RegisterDownloadActivity(downloadCandidates, pendingDownloads.front(), now);
-        //     pendingDownloads.pop();
-        // }
-        //
-        // ForwardStableDownloadCandidates(downloadCandidates, guard, now);
+        while (!pendingDownloads.empty())
+        {
+            RegisterDownloadActivity(downloadCandidates, pendingDownloads.front(), now);
+            pendingDownloads.pop();
+        }
+
+        ForwardStableDownloadCandidates(downloadCandidates, guard, now);
 
         if (hasProcessEvent)
         {
