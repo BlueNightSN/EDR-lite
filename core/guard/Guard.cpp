@@ -27,6 +27,8 @@
 #if defined(_WIN32)
 #define NOMINMAX
 #include <Windows.h>
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
 #endif
 
 #if defined(__APPLE__)
@@ -1121,7 +1123,448 @@ ScanOutcome OutcomeFromStats(const AnalysisStats& stats, const std::wstring& det
 
 constexpr const char* kUserAgent = "EDR-lite/1.0";
 
-#if defined(__APPLE__)
+#if defined(_WIN32)
+
+struct ParsedUrl
+{
+    bool secure = false;
+    INTERNET_PORT port = INTERNET_DEFAULT_HTTPS_PORT;
+    std::wstring host;
+    std::wstring pathAndQuery;
+};
+
+std::wstring Utf8ToWide(const std::string& text)
+{
+    if (text.empty())
+    {
+        return {};
+    }
+
+    const int required = MultiByteToWideChar(
+        CP_UTF8,
+        0,
+        text.data(),
+        static_cast<int>(text.size()),
+        nullptr,
+        0);
+
+    if (required <= 0)
+    {
+        return {};
+    }
+
+    std::wstring wide(static_cast<std::size_t>(required), L'\0');
+    const int written = MultiByteToWideChar(
+        CP_UTF8,
+        0,
+        text.data(),
+        static_cast<int>(text.size()),
+        wide.data(),
+        required);
+
+    if (written != required)
+    {
+        return {};
+    }
+
+    return wide;
+}
+
+std::string WideToUtf8(const std::wstring& text)
+{
+    if (text.empty())
+    {
+        return {};
+    }
+
+    const int required = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        text.data(),
+        static_cast<int>(text.size()),
+        nullptr,
+        0,
+        nullptr,
+        nullptr);
+
+    if (required <= 0)
+    {
+        return {};
+    }
+
+    std::string narrow(static_cast<std::size_t>(required), '\0');
+    const int written = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        text.data(),
+        static_cast<int>(text.size()),
+        narrow.data(),
+        required,
+        nullptr,
+        nullptr);
+
+    if (written != required)
+    {
+        return {};
+    }
+
+    return narrow;
+}
+
+std::string FormatWindowsErrorMessage(const char* operation, DWORD errorCode)
+{
+    std::wstring message;
+
+    wchar_t* buffer = nullptr;
+    const DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER
+        | FORMAT_MESSAGE_FROM_SYSTEM
+        | FORMAT_MESSAGE_IGNORE_INSERTS;
+    const DWORD length = FormatMessageW(
+        flags,
+        nullptr,
+        errorCode,
+        0,
+        reinterpret_cast<LPWSTR>(&buffer),
+        0,
+        nullptr);
+
+    if (length > 0 && buffer)
+    {
+        message.assign(buffer, buffer + length);
+        LocalFree(buffer);
+
+        while (!message.empty()
+            && (message.back() == L'\r' || message.back() == L'\n' || message.back() == L' '))
+        {
+            message.pop_back();
+        }
+    }
+
+    std::ostringstream stream;
+    stream << operation << " failed with WinHTTP error " << errorCode;
+    if (!message.empty())
+    {
+        stream << ": " << WideToUtf8(message);
+    }
+
+    return stream.str();
+}
+
+bool ParseUrl(const std::string& url, ParsedUrl& parsed)
+{
+    parsed = {};
+
+    const std::wstring wideUrl = Utf8ToWide(url);
+    if (wideUrl.empty())
+    {
+        return false;
+    }
+
+    URL_COMPONENTSW components{};
+    components.dwStructSize = sizeof(components);
+    components.dwSchemeLength = static_cast<DWORD>(-1);
+    components.dwHostNameLength = static_cast<DWORD>(-1);
+    components.dwUrlPathLength = static_cast<DWORD>(-1);
+    components.dwExtraInfoLength = static_cast<DWORD>(-1);
+
+    if (!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.size()), 0, &components))
+    {
+        return false;
+    }
+
+    if (!components.lpszHostName || components.dwHostNameLength == 0)
+    {
+        return false;
+    }
+
+    parsed.secure = components.nScheme == INTERNET_SCHEME_HTTPS;
+    parsed.port = components.nPort;
+    parsed.host.assign(components.lpszHostName, components.dwHostNameLength);
+
+    if (components.lpszUrlPath && components.dwUrlPathLength > 0)
+    {
+        parsed.pathAndQuery.assign(components.lpszUrlPath, components.dwUrlPathLength);
+    }
+    else
+    {
+        parsed.pathAndQuery = L"/";
+    }
+
+    if (components.lpszExtraInfo && components.dwExtraInfoLength > 0)
+    {
+        parsed.pathAndQuery.append(components.lpszExtraInfo, components.dwExtraInfoLength);
+    }
+
+    return true;
+}
+
+std::string SanitizeMultipartFilename(const std::filesystem::path& path)
+{
+    std::string filename = path.filename().u8string();
+    for (char& ch : filename)
+    {
+        if (ch == '"' || ch == '\r' || ch == '\n')
+        {
+            ch = '_';
+        }
+    }
+
+    if (filename.empty())
+    {
+        filename = "upload.bin";
+    }
+
+    return filename;
+}
+
+bool ReadBinaryFile(const std::filesystem::path& path, std::string& content)
+{
+    std::ifstream input;
+    if (!OpenInputFile(input, path, std::ios::in | std::ios::binary, L"VirusTotal upload file"))
+    {
+        return false;
+    }
+
+    std::vector<char> buffer(64 * 1024);
+    content.clear();
+
+    while (input)
+    {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize bytesRead = input.gcount();
+        if (bytesRead > 0)
+        {
+            content.append(buffer.data(), static_cast<std::size_t>(bytesRead));
+        }
+    }
+
+    return input.eof() || !input.fail();
+}
+
+bool BuildMultipartUploadBody(
+    const std::filesystem::path& path,
+    const std::string& boundary,
+    std::string& body)
+{
+    std::string fileContent;
+    if (!ReadBinaryFile(path, fileContent))
+    {
+        return false;
+    }
+
+    const std::string filename = SanitizeMultipartFilename(path);
+    const std::string preamble =
+        "--" + boundary + "\r\n"
+        "Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\n"
+        "Content-Type: application/octet-stream\r\n\r\n";
+    const std::string closing = "\r\n--" + boundary + "--\r\n";
+
+    body.clear();
+    body.reserve(preamble.size() + fileContent.size() + closing.size());
+    body.append(preamble);
+    body.append(fileContent);
+    body.append(closing);
+    return true;
+}
+
+HttpResponse PerformWindowsRequest(
+    const wchar_t* method,
+    const std::string& url,
+    const std::string& apiKey,
+    const std::string* contentType,
+    const std::string* requestBody,
+    const std::atomic<bool>& stopRequested)
+{
+    HttpResponse response;
+
+    if (stopRequested.load())
+    {
+        response.canceled = true;
+        response.error = "Canceled";
+        return response;
+    }
+
+    ParsedUrl parsedUrl;
+    if (!ParseUrl(url, parsedUrl))
+    {
+        response.error = "Failed to parse URL";
+        return response;
+    }
+
+    HINTERNET session = WinHttpOpen(
+        Utf8ToWide(kUserAgent).c_str(),
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS,
+        0);
+    if (!session)
+    {
+        response.error = FormatWindowsErrorMessage("WinHttpOpen", GetLastError());
+        return response;
+    }
+
+    const int connectTimeoutMs = static_cast<int>(kCurlConnectTimeoutSeconds * 1000);
+    const int requestTimeoutMs = static_cast<int>(kCurlRequestTimeoutSeconds * 1000);
+    WinHttpSetTimeouts(
+        session,
+        connectTimeoutMs,
+        connectTimeoutMs,
+        requestTimeoutMs,
+        requestTimeoutMs);
+
+    HINTERNET connection = WinHttpConnect(
+        session,
+        parsedUrl.host.c_str(),
+        parsedUrl.port,
+        0);
+    if (!connection)
+    {
+        response.error = FormatWindowsErrorMessage("WinHttpConnect", GetLastError());
+        WinHttpCloseHandle(session);
+        return response;
+    }
+
+    const DWORD requestFlags = parsedUrl.secure ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET request = WinHttpOpenRequest(
+        connection,
+        method,
+        parsedUrl.pathAndQuery.c_str(),
+        nullptr,
+        WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES,
+        requestFlags);
+    if (!request)
+    {
+        response.error = FormatWindowsErrorMessage("WinHttpOpenRequest", GetLastError());
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return response;
+    }
+
+    std::wstring headers = L"x-apikey: " + Utf8ToWide(apiKey) + L"\r\naccept: application/json\r\n";
+    if (contentType && !contentType->empty())
+    {
+        headers += L"content-type: " + Utf8ToWide(*contentType) + L"\r\n";
+    }
+
+    LPVOID optionalData = WINHTTP_NO_REQUEST_DATA;
+    DWORD optionalLength = 0;
+    if (requestBody && !requestBody->empty())
+    {
+        optionalData = const_cast<char*>(requestBody->data());
+        optionalLength = static_cast<DWORD>(requestBody->size());
+    }
+
+    if (!WinHttpSendRequest(
+            request,
+            headers.c_str(),
+            static_cast<DWORD>(headers.size()),
+            optionalData,
+            optionalLength,
+            optionalLength,
+            0))
+    {
+        response.error = FormatWindowsErrorMessage("WinHttpSendRequest", GetLastError());
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return response;
+    }
+
+    if (!WinHttpReceiveResponse(request, nullptr))
+    {
+        response.error = FormatWindowsErrorMessage("WinHttpReceiveResponse", GetLastError());
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return response;
+    }
+
+    DWORD statusCode = 0;
+    DWORD statusCodeSize = sizeof(statusCode);
+    if (WinHttpQueryHeaders(
+            request,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX,
+            &statusCode,
+            &statusCodeSize,
+            WINHTTP_NO_HEADER_INDEX))
+    {
+        response.statusCode = static_cast<long>(statusCode);
+    }
+
+    while (!stopRequested.load())
+    {
+        DWORD available = 0;
+        if (!WinHttpQueryDataAvailable(request, &available))
+        {
+            response.error = FormatWindowsErrorMessage("WinHttpQueryDataAvailable", GetLastError());
+            break;
+        }
+
+        if (available == 0)
+        {
+            break;
+        }
+
+        std::string chunk(static_cast<std::size_t>(available), '\0');
+        DWORD bytesRead = 0;
+        if (!WinHttpReadData(request, chunk.data(), available, &bytesRead))
+        {
+            response.error = FormatWindowsErrorMessage("WinHttpReadData", GetLastError());
+            break;
+        }
+
+        chunk.resize(static_cast<std::size_t>(bytesRead));
+        response.body.append(chunk);
+    }
+
+    if (stopRequested.load())
+    {
+        response.canceled = true;
+        response.error = "Canceled";
+    }
+
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connection);
+    WinHttpCloseHandle(session);
+    return response;
+}
+
+HttpResponse PerformGetRequest(
+    const std::string& url,
+    const std::string& apiKey,
+    const std::atomic<bool>& stopRequested)
+{
+    return PerformWindowsRequest(L"GET", url, apiKey, nullptr, nullptr, stopRequested);
+}
+
+HttpResponse PerformFileUploadRequest(
+    const std::string& url,
+    const std::string& apiKey,
+    const std::filesystem::path& path,
+    const std::atomic<bool>& stopRequested)
+{
+    const std::string boundary = "----EDRLiteBoundary7MA4YWxkTrZu0gW";
+    std::string requestBody;
+    if (!BuildMultipartUploadBody(path, boundary, requestBody))
+    {
+        HttpResponse response;
+        response.error = "Failed to read upload file";
+        return response;
+    }
+
+    const std::string contentType = "multipart/form-data; boundary=" + boundary;
+    return PerformWindowsRequest(
+        L"POST",
+        url,
+        apiKey,
+        &contentType,
+        &requestBody,
+        stopRequested);
+}
+
+#elif defined(__APPLE__)
 
 void EnsureCurlGlobalInit()
 {
