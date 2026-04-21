@@ -1,25 +1,35 @@
 EDR-Lite
+========
 
-EDR-Lite is a lightweight C++17 telemetry collector that captures process start activity and pushes normalized events through a small guard/rule pipeline.
+EDR-Lite is a lightweight C++17 endpoint telemetry prototype. It captures
+process start activity, watches common download locations for changed files,
+and forwards normalized events through a small guard pipeline.
 
 The project currently supports:
 
 - Windows process creation telemetry using ETW and TDH
+- Windows download/desktop file activity polling
 - macOS process launch telemetry using process snapshot polling
-
-The codebase is organized as a low-risk refactor of the original working implementation. Platform-specific collectors stay isolated, while shared event and guard logic live in a common core layer.
+- macOS Downloads folder activity polling
+- Optional VirusTotal file reputation scanning for stable downloaded files
 
 Features
+--------
 
 - Real-time Windows process creation monitoring using ETW
-- TDH-based ETW property parsing for Windows process events
-- macOS process launch monitoring
+- TDH-based ETW property parsing helpers for Windows process events
+- macOS process launch monitoring with `libproc` and `sysctl`
 - Shared `ProcessStartEvent` model across platforms
-- Producer-consumer event flow between collector and app runtime
+- Shared `DownloadFileEvent` model for file activity
+- Producer-consumer event flow between collectors and app runtime
+- File stability delay before scanning changed download candidates
+- Background VirusTotal lookup/upload flow for downloaded files
+- 24-hour local VirusTotal verdict cache
 - Simple guard/rule engine for inspection logic
 - Compile-time platform backend selection
 
 Folder Layout
+-------------
 
 ```text
 app/
@@ -33,6 +43,7 @@ core/
     EventCollectorFactory.h
     IEventCollector.h
   events/
+    DownloadFileEvent.h
     ProcessStartEvent.h
   guard/
     Guard.cpp
@@ -50,57 +61,67 @@ platform/
 ```
 
 Architecture
+------------
 
-The runtime flow is intentionally simple:
+The runtime flow is intentionally small:
 
 ```text
 Platform Collector
       |
-      | ProcessStartEvent
+      | ProcessStartEvent / DownloadFileEvent
       v
-  Event Queue
+  Event Queues
       |
       v
   Guard Engine
       |
       v
- Alerts / Console Output
+ Alerts / Console Output / Download Scan Logs
 ```
 
 Layer responsibilities:
 
-- `app/`: application bootstrap, queue loop, stop handling, and console printing
-- `core/`: shared event model, collector interface, collector factory, and guard/rule logic
-- `platform/windows/`: Windows ETW collection and TDH parsing helpers
-- `platform/macos/`: macOS launch collection logic
+- `app/`: application bootstrap, queue loop, stop handling, file stability checks, and console printing
+- `core/`: shared event models, collector interface, collector factory, and guard/scanning logic
+- `platform/windows/`: Windows ETW collection, TDH parsing helpers, and download/desktop polling
+- `platform/macos/`: macOS process polling and Downloads folder polling
 
 Platform Backends
+-----------------
 
-Windows
+### Windows
 
 - Uses the NT Kernel Logger / kernel process ETW flow
-- Parses event properties with TDH helpers
-- Normalizes fields into `ProcessStartEvent`
-- Keeps ETW callback and property parsing isolated in the Windows backend
+- Parses ETW metadata with TDH helpers
+- Reads live process image paths for process start events
+- Polls the user's Downloads and Desktop folders for changed regular files
+- Emits normalized `ProcessStartEvent` and `DownloadFileEvent` objects
 
-macOS
+Kernel ETW collection usually requires the app to run from an elevated console.
+
+### macOS
 
 - Polls active processes and detects newly seen PIDs
-- Builds a normalized `ProcessStartEvent` using macOS process APIs
-- Keeps launch-monitoring details isolated in the macOS backend
+- Reads image paths and command lines with macOS process APIs
+- Polls `~/Downloads` for changed regular files
+- Emits normalized `ProcessStartEvent` and `DownloadFileEvent` objects
 
 Event Flow
+----------
 
-1. A platform collector captures a process start event.
-2. The collector normalizes the event into `ProcessStartEvent`.
+1. A platform collector captures a process start or file activity event.
+2. The collector normalizes it into `ProcessStartEvent` or `DownloadFileEvent`.
 3. The collector forwards the event through the shared callback interface.
-4. The app runtime pushes the event into a thread-safe queue.
-5. The consumer loop sends the event to the `Guard`.
-6. The app prints the event and alert count.
+4. The app runtime pushes the event into the matching thread-safe queue.
+5. Process events are inspected by the `Guard` and printed with alert counts.
+6. Download events are tracked until the file appears stable for a short quiet period.
+7. Stable download candidates are sent to the guard's download scanner.
+8. The scanner computes SHA-256, checks the local cache, and optionally queries or uploads to VirusTotal.
 
 Core Types
+----------
 
-`ProcessStartEvent`
+### `ProcessStartEvent`
 
 ```cpp
 struct ProcessStartEvent
@@ -115,38 +136,101 @@ struct ProcessStartEvent
 };
 ```
 
-`IEventCollector`
+### `DownloadFileEvent`
+
+```cpp
+struct DownloadFileEvent
+{
+    uint64_t timestampQpc = 0;
+    std::wstring path;
+};
+```
+
+### `IEventCollector`
 
 - Common interface implemented by the Windows and macOS collectors
 - Exposes `Start`, `Stop`, and `IsRunning`
+- Supports optional `SetOnDownloadActivity` callbacks
 
-`Guard`
+### `Guard`
 
-- Owns a list of `IRule` instances
+- Owns a list of `IRule` instances for process inspection
 - Evaluates each `ProcessStartEvent`
-- Returns zero or more `Alert` objects
+- Accepts stable download paths for VirusTotal scanning
+- Manages a background download scanner thread and local verdict cache
 
-Why ETW on Windows?
+Setup
+-----
 
-ETW provides low-overhead telemetry commonly used by security tooling. In this project it is used specifically for process creation events, which are a useful foundation for higher-level detections.
+### 1. Configure VirusTotal scanning
 
-Building
+VirusTotal scanning is optional. Without an API key, the app still collects
+process and download activity, but download reputation checks are skipped.
 
-Windows
+Create a local `.env` file in the repository root:
+
+```text
+VT_API_KEY=your_virustotal_api_key_here
+```
+
+You can also set `VT_API_KEY` as an environment variable. Environment variables
+take precedence over `.env`.
+
+The scanner stores a local verdict cache at:
+
+- Windows: `%LOCALAPPDATA%\EDR-lite\virustotal_cache.tsv`
+- macOS: `~/Library/Application Support/EDR-lite/virustotal_cache.tsv`
+
+Files larger than 32 MB are not automatically uploaded when VirusTotal does not
+already know the hash.
+
+### 2. Build on Windows
 
 Requirements:
 
-- Windows 10 / 11
+- Windows 10 or 11
 - Visual Studio 2022
 - Windows SDK
 
-Relevant system libraries:
+Relevant libraries used by the current code:
 
 - `advapi32.lib`
 - `tdh.lib`
+- `winhttp.lib`
+- Visual Studio default system libraries such as `shell32.lib` and `ole32.lib`
 
-Build the Visual Studio project in x64 configuration.
+Build the Visual Studio solution in the `x64` configuration:
 
-macOS
+```powershell
+msbuild EDR-lite.sln /p:Configuration=Debug /p:Platform=x64
+```
 
-The project also builds on macOS with a C++17 compiler and the platform system headers used by `libproc` and `sysctl`.
+If `msbuild` is not on `PATH`, use the Visual Studio MSBuild executable, for
+example:
+
+```powershell
+& "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" EDR-lite.sln /p:Configuration=Debug /p:Platform=x64
+```
+
+Run the built executable from an elevated console for ETW process telemetry:
+
+```powershell
+.\x64\Debug\EDR-lite.exe
+```
+
+Press Enter to stop when running interactively.
+
+### 3. Build on macOS
+
+The macOS backend sources are present, but this repository currently does not
+include a macOS project file or build script.
+
+To build the macOS code manually, use a C++17 compiler with the platform headers
+for `libproc` and `sysctl`, and link with libcurl for VirusTotal HTTP requests.
+
+Why ETW on Windows?
+-------------------
+
+ETW provides low-overhead telemetry commonly used by security tooling. In this
+project it is used specifically for process creation events, which are a useful
+foundation for higher-level detections.
