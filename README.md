@@ -33,6 +33,8 @@ Folder Layout
 
 ```text
 app/
+  DownloadCandidateTracker.cpp
+  DownloadCandidateTracker.h
   Main.cpp
   Runtime.cpp
   Runtime.h
@@ -42,12 +44,22 @@ core/
     EventCollectorFactory.cpp
     EventCollectorFactory.h
     IEventCollector.h
+  config/
+    AppConfig.cpp
+    AppConfig.h
   events/
     DownloadFileEvent.h
+    EventMetadata.h
     ProcessStartEvent.h
   guard/
     Guard.cpp
     Guard.h
+  logging/
+    Logger.cpp
+    Logger.h
+  process/
+    ProcessTracker.cpp
+    ProcessTracker.h
 
 platform/
   windows/
@@ -81,10 +93,29 @@ Platform Collector
 
 Layer responsibilities:
 
-- `app/`: application bootstrap, queue loop, stop handling, file stability checks, and console printing
-- `core/`: shared event models, collector interface, collector factory, and guard/scanning logic
+- `app/`: application bootstrap, simple event queues, runtime coordination, and download candidate stability tracking
+- `core/`: config, structured logging, process state, shared event models, collector interface/factory, and guard/scanning logic
 - `platform/windows/`: Windows ETW collection, TDH parsing helpers, and download/desktop polling
 - `platform/macos/`: macOS process polling and Downloads folder polling
+
+Phase 1 Architecture
+--------------------
+
+The runtime is intentionally thin. It loads configuration, creates the logger,
+collector, guard, process tracker, and download candidate tracker, wires their
+callbacks, and coordinates shutdown.
+
+Phase 1 components:
+
+- `AppConfig`: compiled defaults plus environment-variable overrides for runtime tunables
+- `Logger`: human-readable console logs plus structured JSON lines in a local log file
+- `ProcessTracker`: in-memory process state table for future parent/child correlation
+- `DownloadCandidateTracker`: file stability and quiet-period handling before guard scanning
+- `Guard` scan callback: emits explicit `DownloadScanResult` records for structured logging
+
+The queue flow remains simple and local to `Runtime.cpp`: collector callbacks
+enqueue events and notify the runtime loop. Logging and processing happen after
+events are drained, not in the collector callback hot path.
 
 Platform Backends
 -----------------
@@ -146,6 +177,21 @@ struct DownloadFileEvent
 };
 ```
 
+### `DownloadScanResult`
+
+```cpp
+struct DownloadScanResult
+{
+    std::wstring path;
+    DownloadScanOutcome outcome;
+    std::string sha256;
+    bool virusTotalQueried;
+    std::wstring status;
+    int maliciousCount;
+    int suspiciousCount;
+};
+```
+
 ### `IEventCollector`
 
 - Common interface implemented by the Windows and macOS collectors
@@ -158,11 +204,31 @@ struct DownloadFileEvent
 - Evaluates each `ProcessStartEvent`
 - Accepts stable download paths for VirusTotal scanning
 - Manages a background download scanner thread and local verdict cache
+- Emits `DownloadScanResult` callbacks for structured scan-result logging
 
 Setup
 -----
 
-### 1. Configure VirusTotal scanning
+### 1. Runtime config and logging
+
+The app runs with compiled defaults when no config is provided.
+
+Environment overrides:
+
+- `EDR_LITE_DOWNLOAD_POLL_MS`: download maintenance loop interval, default `500`
+- `EDR_LITE_DOWNLOAD_QUIET_MS`: stable-file quiet period, default `2000`
+- `EDR_LITE_CONSOLE_LOG`: `true`/`false`, default `true`
+- `EDR_LITE_FILE_LOG`: `true`/`false`, default `true`
+- `EDR_LITE_LOG_FILE`: structured log path, default `logs/edr-lite.jsonl`
+
+Structured logs are JSON lines. The default local log path keeps development
+and demos easy to inspect:
+
+```text
+logs/edr-lite.jsonl
+```
+
+### 2. Configure VirusTotal scanning
 
 VirusTotal scanning is optional. Without an API key, the app still collects
 process and download activity, but download reputation checks are skipped.
@@ -184,7 +250,7 @@ The scanner stores a local verdict cache at:
 Files larger than 32 MB are not automatically uploaded when VirusTotal does not
 already know the hash.
 
-### 2. Build on Windows
+### 3. Build on Windows
 
 Requirements:
 
@@ -220,7 +286,7 @@ Run the built executable from an elevated console for ETW process telemetry:
 
 Press Enter to stop when running interactively.
 
-### 3. Build on macOS
+### 4. Build on macOS
 
 The macOS backend sources are present, but this repository currently does not
 include a macOS project file or build script.

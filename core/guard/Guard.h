@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,6 +25,25 @@ struct Alert
     uint32_t pid = 0;
 };
 
+enum class DownloadScanOutcome
+{
+    Clean,
+    Malicious,
+    Unknown,
+    Error
+};
+
+struct DownloadScanResult
+{
+    std::wstring path;
+    DownloadScanOutcome outcome = DownloadScanOutcome::Unknown;
+    std::string sha256;
+    bool virusTotalQueried = false;
+    std::wstring status;
+    int maliciousCount = 0;
+    int suspiciousCount = 0;
+};
+
 class IRule
 {
 public:
@@ -35,6 +55,9 @@ public:
 
 class Guard
 {
+public:
+    using OnDownloadScanResult = std::function<void(const DownloadScanResult&)>;
+
 private:
     struct DownloadScanState;
     std::vector<std::unique_ptr<IRule>> m_rules;
@@ -52,5 +75,6 @@ public:
     bool RemoveRuleByIndex(std::size_t index); // 0-based
     std::vector<Alert> Inspect(const ProcessStartEvent& e) const;
     void InspectDownloadPath(const std::wstring& path);
+    void SetOnDownloadScanResult(OnDownloadScanResult cb);
     std::size_t RuleCount() const;
 };

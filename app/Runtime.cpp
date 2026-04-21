@@ -1,8 +1,9 @@
 #include "Runtime.h"
 
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
+#include <cstdint>
+#include <cwctype>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -10,56 +11,22 @@
 #include <queue>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <utility>
+#include <vector>
 
 #if defined(_WIN32)
 #include <Windows.h>
 #endif
 
+#include "DownloadCandidateTracker.h"
 #include "../core/collectors/EventCollectorFactory.h"
+#include "../core/config/AppConfig.h"
 #include "../core/guard/Guard.h"
+#include "../core/logging/Logger.h"
+#include "../core/process/ProcessTracker.h"
 
 namespace
 {
-constexpr auto kDownloadCandidateTick = std::chrono::milliseconds(500);
-constexpr auto kDownloadQuietPeriod = std::chrono::seconds(2);
-
-using Clock = std::chrono::steady_clock;
-using TimePoint = Clock::time_point;
-
-struct DownloadCandidate
-{
-    std::wstring path;
-    TimePoint firstSeen;
-    TimePoint lastChangeTime;
-    uintmax_t lastObservedSize = 0;
-    uintmax_t previousObservedSize = 0;
-    bool hasObservedSize = false;
-};
-
-std::wstring NormalizePathKey(const std::wstring& path)
-{
-    if (path.empty())
-    {
-        return {};
-    }
-
-    std::filesystem::path normalized(path);
-    normalized = normalized.lexically_normal();
-    normalized.make_preferred();
-    return normalized.wstring();
-}
-
-void PrintProcessEvent(const ProcessStartEvent& event, std::size_t alertCount)
-{
-    std::wcout << L"PID=" << event.pid
-        << L" PPID=" << event.ppid
-        << L" Image=" << (event.imagePath.empty() ? L"<empty>" : event.imagePath)
-        << L" Alerts=" << alertCount
-        << L"\n";
-}
-
 bool HasInteractiveConsoleInput()
 {
 #if defined(_WIN32)
@@ -76,116 +43,118 @@ bool HasInteractiveConsoleInput()
 #endif
 }
 
-void RegisterDownloadActivity(
-    std::unordered_map<std::wstring, DownloadCandidate>& candidates,
-    const DownloadFileEvent& event,
-    const TimePoint now)
+#if defined(_WIN32)
+std::wstring ReadProcessImagePathFallback(uint32_t pid)
 {
-    const std::wstring key = NormalizePathKey(event.path);
-    if (key.empty())
+    if (pid == 0)
     {
-        return;
+        return {};
     }
 
-    auto [it, inserted] = candidates.try_emplace(key);
-    DownloadCandidate& candidate = it->second;
-
-    if (inserted)
+    HANDLE processHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!processHandle)
     {
-        candidate.path = key;
-        candidate.firstSeen = now;
-        std::wcout << L"New download candidate: " << key << L"\n";
-    }
-    else
-    {
-        std::wcout << L"Updated download candidate: " << key << L"\n";
+        return {};
     }
 
-    candidate.lastChangeTime = now;
+    std::wstring imagePath;
+    DWORD bufferLength = MAX_PATH;
+    std::vector<wchar_t> buffer(static_cast<std::size_t>(bufferLength));
+
+    while (true)
+    {
+        DWORD length = bufferLength;
+        if (QueryFullProcessImageNameW(processHandle, 0, buffer.data(), &length))
+        {
+            imagePath.assign(buffer.data(), buffer.data() + length);
+            break;
+        }
+
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+        {
+            break;
+        }
+
+        bufferLength *= 2;
+        buffer.resize(static_cast<std::size_t>(bufferLength));
+    }
+
+    CloseHandle(processHandle);
+    return imagePath;
 }
 
-void ForwardStableDownloadCandidates(
-    std::unordered_map<std::wstring, DownloadCandidate>& candidates,
-    Guard& guard,
-    const TimePoint now)
+void EnrichProcessImagePaths(ProcessStartEvent& event)
 {
-    std::error_code ec;
-
-    for (auto it = candidates.begin(); it != candidates.end();)
+    if (event.imagePath.empty())
     {
-        DownloadCandidate& candidate = it->second;
-        const std::filesystem::path path(candidate.path);
+        event.imagePath = ReadProcessImagePathFallback(event.pid);
+    }
 
-        if (!std::filesystem::exists(path, ec) || ec)
-        {
-            ec.clear();
-            it = candidates.erase(it);
-            continue;
-        }
-
-        const auto status = std::filesystem::status(path, ec);
-        if (ec || !std::filesystem::is_regular_file(status))
-        {
-            ec.clear();
-            it = candidates.erase(it);
-            continue;
-        }
-
-        const uintmax_t currentSize = std::filesystem::file_size(path, ec);
-        if (ec)
-        {
-            ec.clear();
-            ++it;
-            continue;
-        }
-
-        if (!candidate.hasObservedSize)
-        {
-            candidate.lastObservedSize = currentSize;
-            candidate.previousObservedSize = currentSize;
-            candidate.hasObservedSize = true;
-            ++it;
-            continue;
-        }
-
-        candidate.previousObservedSize = candidate.lastObservedSize;
-        candidate.lastObservedSize = currentSize;
-
-        if (candidate.lastObservedSize != candidate.previousObservedSize)
-        {
-            candidate.lastChangeTime = now;
-            std::wcout << L"Size changed for candidate: " << candidate.path << L"\n";
-            ++it;
-            continue;
-        }
-
-        if (now - candidate.lastChangeTime < kDownloadQuietPeriod)
-        {
-            ++it;
-            continue;
-        }
-
-        std::wcout << L"Forwarding stable download: " << candidate.path << L"\n";
-        guard.InspectDownloadPath(candidate.path);
-        it = candidates.erase(it);
+    if (event.parentImagePath.empty() && event.ppid != 0)
+    {
+        event.parentImagePath = ReadProcessImagePathFallback(event.ppid);
     }
 }
+
+bool EqualsInsensitive(const std::wstring& lhs, const std::wstring& rhs)
+{
+    if (lhs.size() != rhs.size())
+    {
+        return false;
+    }
+
+    for (std::size_t i = 0; i < lhs.size(); ++i)
+    {
+        if (std::towlower(lhs[i]) != std::towlower(rhs[i]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool IsOwnProcessEvent(const ProcessStartEvent& event)
+{
+    if (event.imagePath.empty())
+    {
+        return false;
+    }
+
+    const std::wstring filename = std::filesystem::path(event.imagePath).filename().wstring();
+    return EqualsInsensitive(filename, L"EDR-lite.exe");
+}
+#endif
 } // namespace
 
 int RunApplication()
 {
+    const AppConfig config = LoadAppConfigFromEnvironment();
+    Logger logger(config);
+    logger.LogRuntimeStart(config);
+
     std::unique_ptr<IEventCollector> collector = CreateEventCollector();
     Guard guard;
+    ProcessTracker processTracker;
+    DownloadCandidateTracker downloadTracker(config);
 
     if (!collector)
     {
-        std::wcerr << L"No supported EventCollector backend is available for this platform.\n";
+        logger.LogInfo(
+            L"runtime_error",
+            L"No supported EventCollector backend is available for this platform.");
+        logger.LogRuntimeStop();
         return 1;
     }
 
-    std::queue<ProcessStartEvent> eventQueue;
+    guard.SetOnDownloadScanResult(
+        [&](const DownloadScanResult& result)
+        {
+            logger.LogDownloadScanResult(result);
+        });
+
+    std::queue<ProcessStartEvent> processQueue;
     std::queue<DownloadFileEvent> downloadQueue;
-    std::unordered_map<std::wstring, DownloadCandidate> downloadCandidates;
     std::mutex queueMutex;
     std::condition_variable queueCv;
     std::atomic<bool> stopRequested{ false };
@@ -206,19 +175,20 @@ int RunApplication()
         {
             {
                 std::lock_guard<std::mutex> lock(queueMutex);
-                eventQueue.push(event);
+                processQueue.push(event);
             }
 
             queueCv.notify_one();
         });
 
+    logger.LogCollectorStart(started);
     if (!started)
     {
-        std::wcerr << L"Failed to start EventCollector.\n";
+        logger.LogRuntimeStop();
         return 1;
     }
 
-    std::wcout << L"Running... open notepad/calc/cmd. Press Enter to stop.\n";
+    logger.LogInfo(L"runtime_status", L"Running... open notepad/calc/cmd. Press Enter to stop.");
 
     std::thread inputThread;
     if (HasInteractiveConsoleInput())
@@ -234,21 +204,23 @@ int RunApplication()
     }
     else
     {
-        std::wcout << L"No interactive console input is attached; stop the app from the debugger or by closing the process.\n";
+        logger.LogInfo(
+            L"runtime_status",
+            L"No interactive console input is attached; stop the app from the debugger or by closing the process.");
     }
 
     while (true)
     {
         std::queue<DownloadFileEvent> pendingDownloads;
-        ProcessStartEvent event{};
+        ProcessStartEvent processEvent{};
         bool hasProcessEvent = false;
         bool shouldStop = false;
 
         {
             std::unique_lock<std::mutex> lock(queueMutex);
-            queueCv.wait_for(lock, kDownloadCandidateTick, [&]()
+            queueCv.wait_for(lock, config.downloadPollInterval, [&]()
                 {
-                    return !eventQueue.empty()
+                    return !processQueue.empty()
                         || !downloadQueue.empty()
                         || stopRequested.load();
                 });
@@ -259,31 +231,44 @@ int RunApplication()
                 downloadQueue.pop();
             }
 
-            if (!eventQueue.empty())
+            if (!processQueue.empty())
             {
-                event = std::move(eventQueue.front());
-                eventQueue.pop();
+                processEvent = std::move(processQueue.front());
+                processQueue.pop();
                 hasProcessEvent = true;
             }
 
-            shouldStop = stopRequested.load() && eventQueue.empty();
+            shouldStop = stopRequested.load() && processQueue.empty();
             shouldStop = shouldStop && downloadQueue.empty();
         }
 
-        const TimePoint now = Clock::now();
-
         while (!pendingDownloads.empty())
         {
-            RegisterDownloadActivity(downloadCandidates, pendingDownloads.front(), now);
+            downloadTracker.ObserveDownloadActivity(pendingDownloads.front(), logger);
             pendingDownloads.pop();
         }
 
-        ForwardStableDownloadCandidates(downloadCandidates, guard, now);
+        for (const std::wstring& stablePath : downloadTracker.CollectStableCandidates(logger))
+        {
+            guard.InspectDownloadPath(stablePath);
+        }
 
         if (hasProcessEvent)
         {
-            const auto alerts = guard.Inspect(event);
-            PrintProcessEvent(event, alerts.size());
+            bool skipProcessEvent = false;
+
+#if defined(_WIN32)
+            EnrichProcessImagePaths(processEvent);
+            skipProcessEvent = IsOwnProcessEvent(processEvent);
+#endif
+            if (!skipProcessEvent)
+            {
+                processTracker.ObserveProcessStart(processEvent);
+                logger.LogProcessEvent(processEvent);
+
+                const auto alerts = guard.Inspect(processEvent);
+                logger.LogProcessAlerts(processEvent, alerts);
+            }
         }
 
         if (shouldStop)
@@ -293,11 +278,13 @@ int RunApplication()
     }
 
     collector->Stop();
+    logger.LogCollectorStop();
 
     if (inputThread.joinable())
     {
         inputThread.join();
     }
 
+    logger.LogRuntimeStop();
     return 0;
 }

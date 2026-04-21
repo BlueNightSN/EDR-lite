@@ -215,6 +215,23 @@ std::optional<DownloadVerdict> VerdictFromStorageString(const std::string& value
     return std::nullopt;
 }
 
+DownloadScanOutcome ToDownloadScanOutcome(const DownloadVerdict verdict)
+{
+    switch (verdict)
+    {
+    case DownloadVerdict::Clean:
+        return DownloadScanOutcome::Clean;
+    case DownloadVerdict::Malicious:
+        return DownloadScanOutcome::Malicious;
+    case DownloadVerdict::Unknown:
+        return DownloadScanOutcome::Unknown;
+    case DownloadVerdict::Error:
+        return DownloadScanOutcome::Error;
+    }
+
+    return DownloadScanOutcome::Unknown;
+}
+
 struct VerdictRecord
 {
     DownloadVerdict verdict = DownloadVerdict::Unknown;
@@ -229,6 +246,7 @@ struct ScanOutcome
     int maliciousCount = 0;
     int suspiciousCount = 0;
     bool cacheable = false;
+    bool virusTotalQueried = false;
     std::wstring detail;
 };
 
@@ -1752,6 +1770,8 @@ struct Guard::DownloadScanState
     std::string apiKey;
     bool missingKeyLogged = false;
     bool workerRunning = false;
+    std::mutex callbackMutex;
+    Guard::OnDownloadScanResult onScanResult;
 
     DownloadScanState()
     {
@@ -1792,6 +1812,38 @@ struct Guard::DownloadScanState
         if (worker.joinable())
         {
             worker.join();
+        }
+    }
+
+    void SetOnDownloadScanResult(Guard::OnDownloadScanResult cb)
+    {
+        std::lock_guard<std::mutex> lock(callbackMutex);
+        onScanResult = std::move(cb);
+    }
+
+    void EmitScanResult(
+        const std::wstring& path,
+        const std::string& sha256,
+        const ScanOutcome& outcome)
+    {
+        DownloadScanResult result;
+        result.path = path;
+        result.outcome = ToDownloadScanOutcome(outcome.verdict);
+        result.sha256 = sha256;
+        result.virusTotalQueried = outcome.virusTotalQueried;
+        result.status = outcome.detail;
+        result.maliciousCount = outcome.maliciousCount;
+        result.suspiciousCount = outcome.suspiciousCount;
+
+        Guard::OnDownloadScanResult callback;
+        {
+            std::lock_guard<std::mutex> lock(callbackMutex);
+            callback = onScanResult;
+        }
+
+        if (callback)
+        {
+            callback(result);
         }
     }
 
@@ -1873,6 +1925,10 @@ struct Guard::DownloadScanState
         if (!std::filesystem::exists(fsPath, ec) || ec)
         {
             LogDownloadLine(L"File disappeared before scan: " + path);
+            ScanOutcome outcome;
+            outcome.verdict = DownloadVerdict::Unknown;
+            outcome.detail = L"File disappeared before scan";
+            EmitScanResult(path, {}, outcome);
             return;
         }
 
@@ -1880,6 +1936,10 @@ struct Guard::DownloadScanState
         if (ec || !std::filesystem::is_regular_file(status))
         {
             LogDownloadLine(L"Skipping non-regular file: " + path);
+            ScanOutcome outcome;
+            outcome.verdict = DownloadVerdict::Unknown;
+            outcome.detail = L"Skipping non-regular file";
+            EmitScanResult(path, {}, outcome);
             return;
         }
 
@@ -1890,6 +1950,7 @@ struct Guard::DownloadScanState
             outcome.verdict = DownloadVerdict::Error;
             outcome.detail = L"(failed to hash file)";
             LogDownloadLine(FormatFinalVerdictMessage(path, "<hash-error>", outcome));
+            EmitScanResult(path, {}, outcome);
             return;
         }
 
@@ -1906,6 +1967,7 @@ struct Guard::DownloadScanState
                 outcome.cacheable = true;
                 outcome.detail = BuildCacheDetail(*cached);
                 LogDownloadLine(FormatFinalVerdictMessage(path, sha256, outcome));
+                EmitScanResult(path, sha256, outcome);
                 return;
             }
         }
@@ -1915,6 +1977,10 @@ struct Guard::DownloadScanState
             if (!activeHashes.insert(sha256).second)
             {
                 LogDownloadLine(L"Skipping duplicate in-flight hash for " + path);
+                ScanOutcome outcome;
+                outcome.verdict = DownloadVerdict::Unknown;
+                outcome.detail = L"Skipping duplicate in-flight hash";
+                EmitScanResult(path, sha256, outcome);
                 return;
             }
         }
@@ -1943,6 +2009,7 @@ struct Guard::DownloadScanState
         }
 
         LogDownloadLine(FormatFinalVerdictMessage(path, sha256, outcome));
+        EmitScanResult(path, sha256, outcome);
     }
 
     ScanOutcome ScanWithVirusTotal(
@@ -1972,6 +2039,12 @@ struct Guard::DownloadScanState
             return outcome;
         }
 
+        const auto markVirusTotalQueried = [](ScanOutcome outcome)
+        {
+            outcome.virusTotalQueried = true;
+            return outcome;
+        };
+
         LogDownloadLine(L"VirusTotal lookup by hash: " + BytesToWide(sha256));
         const HttpResponse lookupResponse = PerformGetRequest(
             "https://www.virustotal.com/api/v3/files/" + sha256,
@@ -1983,20 +2056,20 @@ struct Guard::DownloadScanState
             ScanOutcome outcome;
             outcome.verdict = DownloadVerdict::Unknown;
             outcome.detail = L"(lookup canceled during shutdown)";
-            return outcome;
+            return markVirusTotalQueried(outcome);
         }
 
         if (lookupResponse.statusCode == 200)
         {
             if (const auto stats = ParseFileLookupStats(lookupResponse.body))
             {
-                return OutcomeFromStats(*stats, L"(hash lookup)");
+                return markVirusTotalQueried(OutcomeFromStats(*stats, L"(hash lookup)"));
             }
 
             ScanOutcome outcome;
             outcome.verdict = DownloadVerdict::Error;
             outcome.detail = L"(failed to parse lookup response)";
-            return outcome;
+            return markVirusTotalQueried(outcome);
         }
 
         if (lookupResponse.statusCode == 429)
@@ -2004,7 +2077,7 @@ struct Guard::DownloadScanState
             ScanOutcome outcome;
             outcome.verdict = DownloadVerdict::Unknown;
             outcome.detail = L"(VirusTotal quota exceeded)";
-            return outcome;
+            return markVirusTotalQueried(outcome);
         }
 
         if (lookupResponse.statusCode != 404)
@@ -2020,7 +2093,7 @@ struct Guard::DownloadScanState
                 outcome.detail += L" " + BytesToWide(lookupResponse.error);
             }
 
-            return outcome;
+            return markVirusTotalQueried(outcome);
         }
 
         std::error_code sizeEc;
@@ -2030,7 +2103,7 @@ struct Guard::DownloadScanState
             ScanOutcome outcome;
             outcome.verdict = DownloadVerdict::Error;
             outcome.detail = L"(failed to read file size before upload)";
-            return outcome;
+            return markVirusTotalQueried(outcome);
         }
 
         if (fileSize > kMaxAutoUploadBytes)
@@ -2038,7 +2111,7 @@ struct Guard::DownloadScanState
             ScanOutcome outcome;
             outcome.verdict = DownloadVerdict::Unknown;
             outcome.detail = L"(hash unknown, upload skipped because file is over 32 MB)";
-            return outcome;
+            return markVirusTotalQueried(outcome);
         }
 
         LogDownloadLine(L"VirusTotal hash miss, uploading file: " + path);
@@ -2053,7 +2126,7 @@ struct Guard::DownloadScanState
             ScanOutcome outcome;
             outcome.verdict = DownloadVerdict::Unknown;
             outcome.detail = L"(upload canceled during shutdown)";
-            return outcome;
+            return markVirusTotalQueried(outcome);
         }
 
         if (uploadResponse.statusCode == 429)
@@ -2061,7 +2134,7 @@ struct Guard::DownloadScanState
             ScanOutcome outcome;
             outcome.verdict = DownloadVerdict::Unknown;
             outcome.detail = L"(upload skipped because VirusTotal quota was exceeded)";
-            return outcome;
+            return markVirusTotalQueried(outcome);
         }
 
         if (uploadResponse.statusCode < 200 || uploadResponse.statusCode >= 300)
@@ -2077,7 +2150,7 @@ struct Guard::DownloadScanState
                 outcome.detail += L" " + BytesToWide(uploadResponse.error);
             }
 
-            return outcome;
+            return markVirusTotalQueried(outcome);
         }
 
         const auto analysisId = ParseUploadAnalysisId(uploadResponse.body);
@@ -2086,7 +2159,7 @@ struct Guard::DownloadScanState
             ScanOutcome outcome;
             outcome.verdict = DownloadVerdict::Error;
             outcome.detail = L"(failed to parse upload response)";
-            return outcome;
+            return markVirusTotalQueried(outcome);
         }
 
         std::this_thread::sleep_for(kInitialAnalysisPollDelay);
@@ -2105,7 +2178,7 @@ struct Guard::DownloadScanState
                 ScanOutcome outcome;
                 outcome.verdict = DownloadVerdict::Unknown;
                 outcome.detail = L"(analysis polling canceled during shutdown)";
-                return outcome;
+                return markVirusTotalQueried(outcome);
             }
 
             if (analysisResponse.statusCode == 200)
@@ -2116,14 +2189,14 @@ struct Guard::DownloadScanState
                     ScanOutcome outcome;
                     outcome.verdict = DownloadVerdict::Error;
                     outcome.detail = L"(failed to parse analysis response)";
-                    return outcome;
+                    return markVirusTotalQueried(outcome);
                 }
 
                 LogDownloadLine(BuildAnalysisProgressDetail(*status));
 
                 if (status->status == "completed")
                 {
-                    return OutcomeFromStats(status->stats, L"(uploaded file analysis)");
+                    return markVirusTotalQueried(OutcomeFromStats(status->stats, L"(uploaded file analysis)"));
                 }
             }
             else if (analysisResponse.statusCode == 429)
@@ -2131,7 +2204,7 @@ struct Guard::DownloadScanState
                 ScanOutcome outcome;
                 outcome.verdict = DownloadVerdict::Unknown;
                 outcome.detail = L"(analysis polling quota exceeded)";
-                return outcome;
+                return markVirusTotalQueried(outcome);
             }
             else if (analysisResponse.statusCode >= 400)
             {
@@ -2140,7 +2213,7 @@ struct Guard::DownloadScanState
                 outcome.detail = L"(analysis polling failed: HTTP "
                     + BytesToWide(std::to_string(analysisResponse.statusCode))
                     + L")";
-                return outcome;
+                return markVirusTotalQueried(outcome);
             }
 
             std::this_thread::sleep_for(kAnalysisPollInterval);
@@ -2151,7 +2224,7 @@ struct Guard::DownloadScanState
         outcome.detail = stopRequested.load()
             ? L"(analysis polling canceled during shutdown)"
             : L"(analysis polling timed out; VirusTotal may still be queued or in-progress)";
-        return outcome;
+        return markVirusTotalQueried(outcome);
     }
 };
 
@@ -2212,6 +2285,16 @@ void Guard::InspectDownloadPath(const std::wstring& path)
     }
 
     m_downloadScan->Enqueue(path);
+}
+
+void Guard::SetOnDownloadScanResult(OnDownloadScanResult cb)
+{
+    if (!m_downloadScan)
+    {
+        return;
+    }
+
+    m_downloadScan->SetOnDownloadScanResult(std::move(cb));
 }
 
 std::size_t Guard::RuleCount() const

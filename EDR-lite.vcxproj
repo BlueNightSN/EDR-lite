@@ -125,19 +125,29 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="app\DownloadCandidateTracker.cpp" />
     <ClCompile Include="app\Main.cpp" />
     <ClCompile Include="app\Runtime.cpp" />
     <ClCompile Include="core\collectors\EventCollectorFactory.cpp" />
+    <ClCompile Include="core\config\AppConfig.cpp" />
     <ClCompile Include="core\guard\Guard.cpp" />
+    <ClCompile Include="core\logging\Logger.cpp" />
+    <ClCompile Include="core\process\ProcessTracker.cpp" />
     <ClCompile Include="platform\windows\EtwTdhHelpers.cpp" />
     <ClCompile Include="platform\windows\WindowsEtwEventCollector.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="app\DownloadCandidateTracker.h" />
     <ClInclude Include="app\Runtime.h" />
     <ClInclude Include="core\collectors\EventCollectorFactory.h" />
     <ClInclude Include="core\collectors\IEventCollector.h" />
+    <ClInclude Include="core\config\AppConfig.h" />
+    <ClInclude Include="core\events\DownloadFileEvent.h" />
+    <ClInclude Include="core\events\EventMetadata.h" />
     <ClInclude Include="core\events\ProcessStartEvent.h" />
     <ClInclude Include="core\guard\Guard.h" />
+    <ClInclude Include="core\logging\Logger.h" />
+    <ClInclude Include="core\process\ProcessTracker.h" />
     <ClInclude Include="platform\windows\EtwTdhHelpers.h" />
     <ClInclude Include="platform\windows\WindowsEtwEventCollector.h" />
   </ItemGroup>

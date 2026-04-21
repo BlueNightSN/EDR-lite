@@ -27,45 +27,6 @@ namespace
 {
 constexpr auto kDownloadsScanInterval = std::chrono::milliseconds(750);
 
-std::wstring ReadProcessImagePath(uint32_t pid)
-{
-    if (pid == 0)
-    {
-        return {};
-    }
-
-    HANDLE processHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!processHandle)
-    {
-        return {};
-    }
-
-    std::wstring imagePath;
-    DWORD bufferLength = MAX_PATH;
-    std::vector<wchar_t> buffer(static_cast<std::size_t>(bufferLength));
-
-    while (true)
-    {
-        DWORD length = bufferLength;
-        if (QueryFullProcessImageNameW(processHandle, 0, buffer.data(), &length))
-        {
-            imagePath.assign(buffer.data(), buffer.data() + length);
-            break;
-        }
-
-        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-        {
-            break;
-        }
-
-        bufferLength *= 2;
-        buffer.resize(static_cast<std::size_t>(bufferLength));
-    }
-
-    CloseHandle(processHandle);
-    return imagePath;
-}
-
 std::wstring ReadWideEnvironmentVariable(const wchar_t* name)
 {
     if (!name || name[0] == L'\0')
@@ -594,13 +555,8 @@ void WINAPI WindowsEtwEventCollector::OnEvent(PEVENT_RECORD pEvent)
         return;
     }
 
-    // Avoid TDH string parsing for now. We already found one heap overwrite in
-    // the ANSI conversion path, and debugger-launched child processes are a
-    // fast way to stress this callback. Querying the live process image keeps
-    // the collector usable while we narrow the remaining issue.
-    evt.imagePath = ReadProcessImagePath(evt.pid);
-    evt.parentImagePath = ReadProcessImagePath(evt.ppid);
-    evt.commandLine.clear();
+    tryString(evt.imagePath, { L"ImageFileName", L"ImageName", L"ProcessName" });
+    tryString(evt.commandLine, { L"CommandLine", L"CmdLine", L"ProcessCommandLine" });
 
     if (self->m_onProcessStart)
     {

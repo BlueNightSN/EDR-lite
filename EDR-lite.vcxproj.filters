@@ -15,6 +15,9 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="app\DownloadCandidateTracker.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="app\Main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -24,7 +27,16 @@
     <ClCompile Include="core\collectors\EventCollectorFactory.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="core\config\AppConfig.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="core\guard\Guard.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="core\logging\Logger.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="core\process\ProcessTracker.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="platform\windows\EtwTdhHelpers.cpp">
@@ -38,7 +50,19 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="app\DownloadCandidateTracker.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="app\Runtime.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="core\config\AppConfig.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="core\events\DownloadFileEvent.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="core\events\EventMetadata.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="core\events\ProcessStartEvent.h">
@@ -51,6 +75,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="core\collectors\EventCollectorFactory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="core\logging\Logger.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="core\process\ProcessTracker.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="platform\windows\EtwTdhHelpers.h">
