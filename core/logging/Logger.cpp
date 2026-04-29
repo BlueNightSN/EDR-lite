@@ -131,6 +131,7 @@ std::string JsonRawNumberField(const std::string& name, const std::string& value
 bool IsJsonBooleanField(const std::string& name)
 {
     return name == "success"
+        || name == "networkEnabled"
         || name == "consoleLogging"
         || name == "fileLogging"
         || name == "virusTotalQueried";
@@ -145,7 +146,20 @@ bool IsJsonIntegerField(const std::string& name)
         || name == "maliciousCount"
         || name == "suspiciousCount"
         || name == "downloadPollMs"
-        || name == "downloadQuietMs";
+        || name == "downloadQuietMs"
+        || name == "networkFlowIdleMs"
+        || name == "networkMaxEventsPerTick"
+        || name == "networkMaxQueueSize"
+        || name == "timestampStartQpc"
+        || name == "timestampLastQpc"
+        || name == "localPort"
+        || name == "remotePort"
+        || name == "packetCount"
+        || name == "bytesTotal"
+        || name == "bytesIn"
+        || name == "bytesOut"
+        || name == "queueSize"
+        || name == "droppedCount";
 }
 
 bool IsUnsignedIntegerText(const std::string& value)
@@ -182,6 +196,34 @@ std::string SeverityToString(const Severity severity)
         return "medium";
     case Severity::High:
         return "high";
+    }
+
+    return "unknown";
+}
+
+std::string NetworkProtocolToString(const NetworkProtocol protocol)
+{
+    switch (protocol)
+    {
+    case NetworkProtocol::Tcp:
+        return "tcp";
+    case NetworkProtocol::Udp:
+        return "udp";
+    }
+
+    return "unknown";
+}
+
+std::string NetworkDirectionToString(const NetworkDirection direction)
+{
+    switch (direction)
+    {
+    case NetworkDirection::Unknown:
+        return "unknown";
+    case NetworkDirection::Inbound:
+        return "inbound";
+    case NetworkDirection::Outbound:
+        return "outbound";
     }
 
     return "unknown";
@@ -241,6 +283,11 @@ void Logger::LogRuntimeStart(const AppConfig& config)
         {
             { "downloadPollMs", std::to_string(config.downloadPollInterval.count()) },
             { "downloadQuietMs", std::to_string(config.downloadQuietPeriod.count()) },
+            { "networkEnabled", config.networkEnabled ? "true" : "false" },
+            { "networkFlowIdleMs", std::to_string(config.networkFlowIdlePeriod.count()) },
+            { "networkMaxEventsPerTick", std::to_string(config.networkMaxEventsPerTick) },
+            { "networkMaxQueueSize", std::to_string(config.networkMaxQueueSize) },
+            { "networkInterface", config.networkInterface },
             { "consoleLogging", config.consoleLoggingEnabled ? "true" : "false" },
             { "fileLogging", config.fileLoggingEnabled ? "true" : "false" },
             { "logFile", config.logFilePath.string() }
@@ -322,6 +369,39 @@ void Logger::LogProcessAlerts(const ProcessStartEvent& event, const std::vector<
                 { "message", WideToUtf8(alert.message) }
             });
     }
+}
+
+void Logger::LogNetworkFlowEvent(const NetworkFlowEvent& event)
+{
+    WriteRecord(
+        "network_flow_event",
+        {
+            { "timestampStartQpc", std::to_string(event.timestampStartQpc) },
+            { "timestampLastQpc", std::to_string(event.timestampLastQpc) },
+            { "protocol", NetworkProtocolToString(event.protocol) },
+            { "localAddress", event.localAddress },
+            { "localPort", std::to_string(event.localPort) },
+            { "remoteAddress", event.remoteAddress },
+            { "remotePort", std::to_string(event.remotePort) },
+            { "packetCount", std::to_string(event.packetCount) },
+            { "bytesTotal", std::to_string(event.bytesTotal) },
+            { "bytesIn", std::to_string(event.bytesIn) },
+            { "bytesOut", std::to_string(event.bytesOut) },
+            { "direction", NetworkDirectionToString(event.direction) },
+            { "pid", std::to_string(event.pid) },
+            { "processImagePath", WideToUtf8(event.processImagePath) },
+            { "source", event.source }
+        });
+}
+
+void Logger::LogNetworkQueuePressure(const std::size_t queueSize, const uint64_t droppedCount)
+{
+    WriteRecord(
+        "network_queue_pressure",
+        {
+            { "queueSize", std::to_string(queueSize) },
+            { "droppedCount", std::to_string(droppedCount) }
+        });
 }
 
 void Logger::LogDownloadCandidate(const std::wstring& path, const std::wstring& status)

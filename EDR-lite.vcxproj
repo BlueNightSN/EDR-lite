@@ -69,17 +69,36 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Label="UserMacros">
+    <EDRLiteEnableNpcap Condition="'$(EDRLiteEnableNpcap)'==''">false</EDRLiteEnableNpcap>
+    <NpcapSdkDir Condition="'$(NpcapSdkDir)'==''">C:\Users\rotem\OneDrive\מסמכים\NpcapSDK</NpcapSdkDir>
+    <NpcapPreprocessorDefinitions Condition="'$(EDRLiteEnableNpcap)'=='true'">EDR_LITE_HAS_NPCAP=1;</NpcapPreprocessorDefinitions>
+    <NpcapWin32LibraryDirectories Condition="'$(EDRLiteEnableNpcap)'=='true'">$(NpcapSdkDir)\Lib;</NpcapWin32LibraryDirectories>
+    <NpcapX64LibraryDirectories Condition="'$(EDRLiteEnableNpcap)'=='true'">$(NpcapSdkDir)\Lib\x64;</NpcapX64LibraryDirectories>
+    <NpcapAdditionalDependencies Condition="'$(EDRLiteEnableNpcap)'=='true'">wpcap.lib;Packet.lib;Ws2_32.lib;</NpcapAdditionalDependencies>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(EDRLiteEnableNpcap)'=='true' and '$(Platform)'=='Win32'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(NpcapSdkDir)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(EDRLiteEnableNpcap)'=='true' and '$(Platform)'=='x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(NpcapSdkDir)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;$(NpcapPreprocessorDefinitions)%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(NpcapWin32LibraryDirectories)%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(NpcapAdditionalDependencies)%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -88,25 +107,29 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;$(NpcapPreprocessorDefinitions)%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(NpcapWin32LibraryDirectories)%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(NpcapAdditionalDependencies)%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;$(NpcapPreprocessorDefinitions)%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(NpcapX64LibraryDirectories)%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(NpcapAdditionalDependencies)%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -115,13 +138,15 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;$(NpcapPreprocessorDefinitions)%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(NpcapX64LibraryDirectories)%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(NpcapAdditionalDependencies)%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -132,9 +157,11 @@
     <ClCompile Include="core\config\AppConfig.cpp" />
     <ClCompile Include="core\guard\Guard.cpp" />
     <ClCompile Include="core\logging\Logger.cpp" />
+    <ClCompile Include="core\network\FlowAggregator.cpp" />
     <ClCompile Include="core\process\ProcessTracker.cpp" />
     <ClCompile Include="platform\windows\EtwTdhHelpers.cpp" />
     <ClCompile Include="platform\windows\WindowsEtwEventCollector.cpp" />
+    <ClCompile Include="platform\windows\WindowsNpcapNetworkCollector.cpp" Condition="'$(EDRLiteEnableNpcap)'=='true'" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="app\DownloadCandidateTracker.h" />
@@ -144,12 +171,15 @@
     <ClInclude Include="core\config\AppConfig.h" />
     <ClInclude Include="core\events\DownloadFileEvent.h" />
     <ClInclude Include="core\events\EventMetadata.h" />
+    <ClInclude Include="core\events\NetworkFlowEvent.h" />
     <ClInclude Include="core\events\ProcessStartEvent.h" />
     <ClInclude Include="core\guard\Guard.h" />
     <ClInclude Include="core\logging\Logger.h" />
+    <ClInclude Include="core\network\FlowAggregator.h" />
     <ClInclude Include="core\process\ProcessTracker.h" />
     <ClInclude Include="platform\windows\EtwTdhHelpers.h" />
     <ClInclude Include="platform\windows\WindowsEtwEventCollector.h" />
+    <ClInclude Include="platform\windows\WindowsNpcapNetworkCollector.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

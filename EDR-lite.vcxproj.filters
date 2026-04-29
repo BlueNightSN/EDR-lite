@@ -36,6 +36,9 @@
     <ClCompile Include="core\logging\Logger.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="core\network\FlowAggregator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="core\process\ProcessTracker.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -43,6 +46,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="platform\windows\WindowsEtwEventCollector.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="platform\windows\WindowsNpcapNetworkCollector.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="platform\macos\MacosEventCollector.cpp">
@@ -65,6 +71,9 @@
     <ClInclude Include="core\events\EventMetadata.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="core\events\NetworkFlowEvent.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="core\events\ProcessStartEvent.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -80,6 +89,9 @@
     <ClInclude Include="core\logging\Logger.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="core\network\FlowAggregator.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="core\process\ProcessTracker.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -87,6 +99,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="platform\windows\WindowsEtwEventCollector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="platform\windows\WindowsNpcapNetworkCollector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="platform\macos\MacosEventCollector.h">

@@ -12,6 +12,7 @@ The project currently supports:
 - macOS process launch telemetry using process snapshot polling
 - macOS Downloads folder activity polling
 - Optional VirusTotal file reputation scanning for stable downloaded files
+- Optional Windows network flow telemetry using Npcap, summarized before runtime processing
 
 Features
 --------
@@ -21,6 +22,7 @@ Features
 - macOS process launch monitoring with `libproc` and `sysctl`
 - Shared `ProcessStartEvent` model across platforms
 - Shared `DownloadFileEvent` model for file activity
+- Shared `NetworkFlowEvent` model for summarized network flows
 - Producer-consumer event flow between collectors and app runtime
 - File stability delay before scanning changed download candidates
 - Background VirusTotal lookup/upload flow for downloaded files
@@ -50,6 +52,7 @@ core/
   events/
     DownloadFileEvent.h
     EventMetadata.h
+    NetworkFlowEvent.h
     ProcessStartEvent.h
   guard/
     Guard.cpp
@@ -57,6 +60,9 @@ core/
   logging/
     Logger.cpp
     Logger.h
+  network/
+    FlowAggregator.cpp
+    FlowAggregator.h
   process/
     ProcessTracker.cpp
     ProcessTracker.h
@@ -67,6 +73,8 @@ platform/
     EtwTdhHelpers.h
     WindowsEtwEventCollector.cpp
     WindowsEtwEventCollector.h
+    WindowsNpcapNetworkCollector.cpp
+    WindowsNpcapNetworkCollector.h
   macos/
     MacosEventCollector.cpp
     MacosEventCollector.h
@@ -80,7 +88,7 @@ The runtime flow is intentionally small:
 ```text
 Platform Collector
       |
-      | ProcessStartEvent / DownloadFileEvent
+      | ProcessStartEvent / DownloadFileEvent / NetworkFlowEvent
       v
   Event Queues
       |
@@ -95,7 +103,7 @@ Layer responsibilities:
 
 - `app/`: application bootstrap, simple event queues, runtime coordination, and download candidate stability tracking
 - `core/`: config, structured logging, process state, shared event models, collector interface/factory, and guard/scanning logic
-- `platform/windows/`: Windows ETW collection, TDH parsing helpers, and download/desktop polling
+- `platform/windows/`: Windows ETW collection, optional Npcap flow collection, TDH parsing helpers, and download/desktop polling
 - `platform/macos/`: macOS process polling and Downloads folder polling
 
 Phase 1 Architecture
@@ -126,6 +134,7 @@ Platform Backends
 - Parses ETW metadata with TDH helpers
 - Reads live process image paths for process start events
 - Polls the user's Downloads and Desktop folders for changed regular files
+- Optionally captures IPv4 TCP/UDP packets via Npcap and emits summarized flow records
 - Emits normalized `ProcessStartEvent` and `DownloadFileEvent` objects
 
 Kernel ETW collection usually requires the app to run from an elevated console.
@@ -220,6 +229,11 @@ Environment overrides:
 - `EDR_LITE_CONSOLE_LOG`: `true`/`false`, default `true`
 - `EDR_LITE_FILE_LOG`: `true`/`false`, default `true`
 - `EDR_LITE_LOG_FILE`: structured log path, default `logs/edr-lite.jsonl`
+- `EDR_LITE_NETWORK_ENABLED`: `true`/`false`, default `false`
+- `EDR_LITE_NETWORK_FLOW_IDLE_MS`: flow idle and segmentation interval, default `5000`
+- `EDR_LITE_NETWORK_MAX_EVENTS_PER_TICK`: max summarized network events processed per runtime loop, default `32`
+- `EDR_LITE_NETWORK_MAX_QUEUE_SIZE`: bounded runtime queue size for summarized network events, default `2048`
+- `EDR_LITE_NETWORK_INTERFACE`: optional exact Npcap interface name or description
 
 Structured logs are JSON lines. The default local log path keeps development
 and demos easy to inspect:
@@ -264,6 +278,24 @@ Relevant libraries used by the current code:
 - `tdh.lib`
 - `winhttp.lib`
 - Visual Studio default system libraries such as `shell32.lib` and `ole32.lib`
+
+Optional Npcap network flow telemetry is disabled by default and does not participate in the normal build. To enable it for a Windows build, pass:
+
+```powershell
+msbuild EDR-lite.sln /p:Configuration=Debug /p:Platform=x64 /p:EDRLiteEnableNpcap=true /p:NpcapSdkDir=C:\Path\To\NpcapSDK
+```
+
+When the optional feature is enabled, the build expects:
+
+- `$(NpcapSdkDir)\Include`
+- `$(NpcapSdkDir)\Lib\x64` for `x64`
+- `$(NpcapSdkDir)\Lib` for `Win32`
+
+and links:
+
+- `wpcap.lib`
+- `Packet.lib`
+- `Ws2_32.lib`
 
 Build the Visual Studio solution in the `x64` configuration:
 

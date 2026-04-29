@@ -1,9 +1,12 @@
 #include "Runtime.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cwctype>
+#include <deque>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -15,15 +18,21 @@
 #include <vector>
 
 #if defined(_WIN32)
+#define NOMINMAX
 #include <Windows.h>
 #endif
 
 #include "DownloadCandidateTracker.h"
 #include "../core/collectors/EventCollectorFactory.h"
 #include "../core/config/AppConfig.h"
+#include "../core/events/NetworkFlowEvent.h"
 #include "../core/guard/Guard.h"
 #include "../core/logging/Logger.h"
 #include "../core/process/ProcessTracker.h"
+
+#if defined(_WIN32) && defined(EDR_LITE_HAS_NPCAP)
+#include "../platform/windows/WindowsNpcapNetworkCollector.h"
+#endif
 
 namespace
 {
@@ -125,6 +134,23 @@ bool IsOwnProcessEvent(const ProcessStartEvent& event)
     return EqualsInsensitive(filename, L"EDR-lite.exe");
 }
 #endif
+
+bool ShouldFlushDropWarning(
+    const std::chrono::steady_clock::time_point lastWarning,
+    const bool force)
+{
+    if (force)
+    {
+        return true;
+    }
+
+    if (lastWarning == std::chrono::steady_clock::time_point{})
+    {
+        return true;
+    }
+
+    return std::chrono::steady_clock::now() - lastWarning >= std::chrono::seconds(5);
+}
 } // namespace
 
 int RunApplication()
@@ -155,9 +181,20 @@ int RunApplication()
 
     std::queue<ProcessStartEvent> processQueue;
     std::queue<DownloadFileEvent> downloadQueue;
+    std::deque<NetworkFlowEvent> networkQueue;
     std::mutex queueMutex;
     std::condition_variable queueCv;
     std::atomic<bool> stopRequested{ false };
+    bool collectorsStopped = false;
+    bool collectorStopLogged = false;
+    bool networkCollectorStopLogged = false;
+    uint64_t pendingDroppedNetworkEvents = 0;
+    std::chrono::steady_clock::time_point lastNetworkDropLog{};
+
+#if defined(_WIN32) && defined(EDR_LITE_HAS_NPCAP)
+    std::unique_ptr<WindowsNpcapNetworkCollector> networkCollector;
+    bool networkCollectorStarted = false;
+#endif
 
     collector->SetOnDownloadActivity(
         [&](const DownloadFileEvent& event)
@@ -188,6 +225,73 @@ int RunApplication()
         return 1;
     }
 
+#if defined(_WIN32) && defined(EDR_LITE_HAS_NPCAP)
+    if (config.networkEnabled)
+    {
+        networkCollector = std::make_unique<WindowsNpcapNetworkCollector>(config);
+        networkCollectorStarted = networkCollector->Start(
+            [&](NetworkFlowEvent&& event)
+            {
+                bool enqueued = false;
+                bool shouldLogPressure = false;
+                std::size_t queueSize = 0;
+                uint64_t droppedCountToLog = 0;
+
+                {
+                    std::lock_guard<std::mutex> lock(queueMutex);
+                    if (networkQueue.size() < config.networkMaxQueueSize)
+                    {
+                        networkQueue.push_back(std::move(event));
+                        enqueued = true;
+                    }
+                    else
+                    {
+                        ++pendingDroppedNetworkEvents;
+                        queueSize = networkQueue.size();
+
+                        if (ShouldFlushDropWarning(lastNetworkDropLog, false))
+                        {
+                            shouldLogPressure = true;
+                            droppedCountToLog = pendingDroppedNetworkEvents;
+                            pendingDroppedNetworkEvents = 0;
+                            lastNetworkDropLog = std::chrono::steady_clock::now();
+                        }
+                    }
+                }
+
+                if (enqueued)
+                {
+                    queueCv.notify_one();
+                    return true;
+                }
+
+                if (shouldLogPressure)
+                {
+                    logger.LogNetworkQueuePressure(queueSize, droppedCountToLog);
+                }
+
+                return false;
+            });
+
+        if (networkCollectorStarted)
+        {
+            logger.LogInfo(L"network_collector", L"Optional Npcap network telemetry collector started.");
+        }
+        else
+        {
+            logger.LogInfo(L"network_collector", L"Optional Npcap network telemetry collector could not be started.");
+            networkCollector.reset();
+        }
+    }
+#elif defined(_WIN32)
+    if (config.networkEnabled)
+    {
+        logger.LogInfo(
+            L"network_collector",
+            L"Network telemetry is enabled in config, but this build does not include optional Npcap support.");
+    }
+#endif
+
     logger.LogInfo(L"runtime_status", L"Running... open notepad/calc/cmd. Press Enter to stop.");
 
     std::thread inputThread;
@@ -213,7 +317,9 @@ int RunApplication()
     {
         std::queue<DownloadFileEvent> pendingDownloads;
         ProcessStartEvent processEvent{};
+        std::vector<NetworkFlowEvent> pendingNetworkEvents;
         bool hasProcessEvent = false;
+        bool shouldStopCollectors = false;
         bool shouldStop = false;
 
         {
@@ -222,6 +328,7 @@ int RunApplication()
                 {
                     return !processQueue.empty()
                         || !downloadQueue.empty()
+                        || !networkQueue.empty()
                         || stopRequested.load();
                 });
 
@@ -238,8 +345,48 @@ int RunApplication()
                 hasProcessEvent = true;
             }
 
-            shouldStop = stopRequested.load() && processQueue.empty();
-            shouldStop = shouldStop && downloadQueue.empty();
+            const std::size_t networkEventsToDrain =
+                config.networkMaxEventsPerTick < networkQueue.size()
+                    ? config.networkMaxEventsPerTick
+                    : networkQueue.size();
+            pendingNetworkEvents.reserve(networkEventsToDrain);
+
+            for (std::size_t i = 0; i < networkEventsToDrain; ++i)
+            {
+                pendingNetworkEvents.push_back(std::move(networkQueue.front()));
+                networkQueue.pop_front();
+            }
+
+            shouldStopCollectors = stopRequested.load() && !collectorsStopped;
+            shouldStop = stopRequested.load()
+                && collectorsStopped
+                && processQueue.empty()
+                && downloadQueue.empty()
+                && networkQueue.empty();
+        }
+
+        if (shouldStopCollectors)
+        {
+            collector->Stop();
+            collectorsStopped = true;
+
+            if (!collectorStopLogged)
+            {
+                logger.LogCollectorStop();
+                collectorStopLogged = true;
+            }
+
+#if defined(_WIN32) && defined(EDR_LITE_HAS_NPCAP)
+            if (networkCollectorStarted && networkCollector)
+            {
+                networkCollector->Stop();
+                if (!networkCollectorStopLogged)
+                {
+                    logger.LogInfo(L"network_collector", L"Optional Npcap network telemetry collector stopped.");
+                    networkCollectorStopLogged = true;
+                }
+            }
+#endif
         }
 
         while (!pendingDownloads.empty())
@@ -271,14 +418,54 @@ int RunApplication()
             }
         }
 
+        for (const NetworkFlowEvent& event : pendingNetworkEvents)
+        {
+            logger.LogNetworkFlowEvent(event);
+        }
+
         if (shouldStop)
         {
             break;
         }
     }
 
-    collector->Stop();
-    logger.LogCollectorStop();
+    if (!collectorStopLogged)
+    {
+        collector->Stop();
+        logger.LogCollectorStop();
+    }
+
+#if defined(_WIN32) && defined(EDR_LITE_HAS_NPCAP)
+    if (networkCollectorStarted && networkCollector)
+    {
+        networkCollector->Stop();
+        if (!networkCollectorStopLogged)
+        {
+            logger.LogInfo(L"network_collector", L"Optional Npcap network telemetry collector stopped.");
+        }
+    }
+#endif
+
+    {
+        std::size_t queueSize = 0;
+        uint64_t droppedCountToLog = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            if (pendingDroppedNetworkEvents > 0 && ShouldFlushDropWarning(lastNetworkDropLog, true))
+            {
+                queueSize = networkQueue.size();
+                droppedCountToLog = pendingDroppedNetworkEvents;
+                pendingDroppedNetworkEvents = 0;
+                lastNetworkDropLog = std::chrono::steady_clock::now();
+            }
+        }
+
+        if (droppedCountToLog > 0)
+        {
+            logger.LogNetworkQueuePressure(queueSize, droppedCountToLog);
+        }
+    }
 
     if (inputThread.joinable())
     {

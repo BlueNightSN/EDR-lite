@@ -73,6 +73,25 @@ bool TryParseMilliseconds(const std::string& raw, std::chrono::milliseconds& val
     }
 }
 
+bool TryParseSizeT(const std::string& raw, std::size_t& value)
+{
+    try
+    {
+        const unsigned long long parsed = std::stoull(raw);
+        if (parsed == 0)
+        {
+            return false;
+        }
+
+        value = static_cast<std::size_t>(parsed);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
 void ApplyMillisecondsOverride(
     const char* name,
     std::chrono::milliseconds& target)
@@ -104,6 +123,21 @@ void ApplyBoolOverride(const char* name, bool& target)
         target = parsed;
     }
 }
+
+void ApplySizeTOverride(const char* name, std::size_t& target)
+{
+    const std::string raw = ReadEnvironmentVariable(name);
+    if (raw.empty())
+    {
+        return;
+    }
+
+    std::size_t parsed = 0;
+    if (TryParseSizeT(raw, parsed))
+    {
+        target = parsed;
+    }
+}
 } // namespace
 
 AppConfig LoadAppConfigFromEnvironment()
@@ -112,8 +146,13 @@ AppConfig LoadAppConfigFromEnvironment()
 
     ApplyMillisecondsOverride("EDR_LITE_DOWNLOAD_POLL_MS", config.downloadPollInterval);
     ApplyMillisecondsOverride("EDR_LITE_DOWNLOAD_QUIET_MS", config.downloadQuietPeriod);
+    ApplyBoolOverride("EDR_LITE_NETWORK_ENABLED", config.networkEnabled);
+    ApplyMillisecondsOverride("EDR_LITE_NETWORK_FLOW_IDLE_MS", config.networkFlowIdlePeriod);
+    ApplySizeTOverride("EDR_LITE_NETWORK_MAX_EVENTS_PER_TICK", config.networkMaxEventsPerTick);
+    ApplySizeTOverride("EDR_LITE_NETWORK_MAX_QUEUE_SIZE", config.networkMaxQueueSize);
     ApplyBoolOverride("EDR_LITE_CONSOLE_LOG", config.consoleLoggingEnabled);
     ApplyBoolOverride("EDR_LITE_FILE_LOG", config.fileLoggingEnabled);
+    config.networkInterface = ReadEnvironmentVariable("EDR_LITE_NETWORK_INTERFACE");
 
     const std::string logFilePath = ReadEnvironmentVariable("EDR_LITE_LOG_FILE");
     if (!logFilePath.empty())
